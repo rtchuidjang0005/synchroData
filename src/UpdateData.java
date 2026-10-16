@@ -72,6 +72,7 @@ public class UpdateData {
                         System.out.println("Base de données : " + list.get("database") + "\n Chemin : " + path + "\n");
                         System.out.println("Serveur : " + list.get("servername"));
                         String database = (String) list.get("database");
+                        Table.setUpdateExistingConfig(list.get("updateExisting"));
     //            DocLigne.sendDataElement(sqlCon, path,list.get(1));
 
                         Object valueSelect = list.get("compteg");

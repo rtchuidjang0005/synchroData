@@ -10,45 +10,45 @@ public class FJournaux extends Table {
 
     public static String insert(String filename)
     {
-        return  "BEGIN TRY " +
-                " \n" +
-                "SET DATEFORMAT ymd;\n" +
+        return  """
+                BEGIN TRY
+                SET DATEFORMAT ymd;
+                 IF OBJECT_ID('F_JOURNAUX_DEST') IS NOT NULL
+                INSERT INTO F_JOURNAUX (
+                [JO_Num],[JO_Intitule],[CG_Num],[JO_Type]
+                      ,[JO_NumPiece],[JO_Contrepartie],[JO_SaisAnal],[JO_NotCalcTot]
+                      ,[JO_Rappro],[JO_Sommeil],[JO_IFRS],[JO_Reglement]
+                      ,[JO_SuiviTreso],[cbProt],[cbCreateur],[cbModification]
+                      ,[cbReplication],[cbFlag])
 
-                " IF OBJECT_ID('F_JOURNAUX_DEST') IS NOT NULL\n"+
-                "INSERT INTO F_JOURNAUX (\n" +
-                "[JO_Num],[JO_Intitule],[CG_Num],[JO_Type]\n" +
-                "      ,[JO_NumPiece],[JO_Contrepartie],[JO_SaisAnal],[JO_NotCalcTot]\n" +
-                "      ,[JO_Rappro],[JO_Sommeil],[JO_IFRS],[JO_Reglement]\n" +
-                "      ,[JO_SuiviTreso],[cbProt],[cbCreateur],[cbModification]\n" +
-                "      ,[cbReplication],[cbFlag])\n" +
-                "            \n" +
-                "SELECT dest.[JO_Num],[JO_Intitule],[CG_Num],[JO_Type]\n" +
-                "      ,[JO_NumPiece],[JO_Contrepartie],[JO_SaisAnal],[JO_NotCalcTot]\n" +
-                "      ,[JO_Rappro],[JO_Sommeil],[JO_IFRS],[JO_Reglement]\n" +
-                "      ,[JO_SuiviTreso],[cbProt],[cbCreateur],[cbModification]\n" +
-                "      ,[cbReplication],[cbFlag]\n" +
-                "FROM F_JOURNAUX_DEST dest\n" +
-                "LEFT JOIN (SELECT JO_Num FROM F_JOURNAUX) src\n" +
-                "\tON\tdest.JO_Num = src.JO_Num\n" +
-                "WHERE src.JO_Num IS NULL\n" +
-                "            \n" +
-                "IF OBJECT_ID('F_JOURNAUX_DEST') IS NOT NULL \n" +
-                "DROP TABLE F_JOURNAUX_DEST \n" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'F_COMPTET',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+                SELECT dest.[JO_Num],[JO_Intitule],[CG_Num],[JO_Type]
+                      ,[JO_NumPiece],[JO_Contrepartie],[JO_SaisAnal],[JO_NotCalcTot]
+                      ,[JO_Rappro],[JO_Sommeil],[JO_IFRS],[JO_Reglement]
+                      ,[JO_SuiviTreso],[cbProt],[cbCreateur],[cbModification]
+                      ,[cbReplication],[cbFlag]
+                FROM F_JOURNAUX_DEST dest
+                LEFT JOIN (SELECT JO_Num FROM F_JOURNAUX) src
+                    ON    dest.JO_Num = src.JO_Num
+                WHERE src.JO_Num IS NULL
+
+                IF OBJECT_ID('F_JOURNAUX_DEST') IS NOT NULL
+                DROP TABLE F_JOURNAUX_DEST
+                 END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_COMPTET',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
     {
@@ -61,7 +61,7 @@ public class FJournaux extends Table {
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("JO_Num,JO_Type", "'JO_Num','JO_Type','CG_Num','JO_IFRS'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "JO_Num,JO_Type", "'JO_Num','JO_Type','CG_Num','JO_IFRS'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteTempTable(sqlCon, tableName + "_DEST");
@@ -80,11 +80,13 @@ public class FJournaux extends Table {
     public static void deleteJournaux(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_JOURNAUX \n" +
-                " WHERE JO_Num IN(SELECT JO_Num FROM F_JOURNAUX_SUPPR) \n" +
-                " \n" +
-                " IF OBJECT_ID('F_JOURNAUX_SUPPR') IS NOT NULL \n" +
-                " DROP TABLE F_JOURNAUX_SUPPR \n";
+                """
+                         DELETE FROM F_JOURNAUX
+                         WHERE JO_Num IN(SELECT JO_Num FROM F_JOURNAUX_SUPPR)
+
+                         IF OBJECT_ID('F_JOURNAUX_SUPPR') IS NOT NULL
+                         DROP TABLE F_JOURNAUX_SUPPR
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

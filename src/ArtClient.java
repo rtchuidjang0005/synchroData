@@ -10,45 +10,46 @@ public class ArtClient extends Table{
     public static String insert(String filename)
     {
         return
-                        " BEGIN TRY " +
-                        "SET DATEFORMAT ymd;\n" +
-                        " IF OBJECT_ID('F_ARTCLIENT_DEST') IS NOT NULL\n"+
-                        " INSERT INTO [dbo].[F_ARTCLIENT]  \n" +
-                        " ([AR_Ref],[AC_Categorie],[AC_PrixVen],[AC_Coef]\n" +
-                        "      ,[AC_PrixTTC],[AC_Arrondi],[AC_QteMont],[EG_Champ]\n" +
-                        "      ,[AC_PrixDev],[AC_Devise],[CT_Num],[AC_Remise]\n" +
-                        "      ,[AC_Calcul],[AC_TypeRem],[AC_RefClient],[AC_CoefNouv]\n" +
-                        "      ,[AC_PrixVenNouv],[AC_PrixDevNouv],[AC_RemiseNouv],[AC_DateApplication]\n" +
-                        "      ,[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag])  \n" +
-                        " \n" +
-                        " SELECT dest.[AR_Ref],dest.[AC_Categorie],[AC_PrixVen],[AC_Coef]\n" +
-                        "      ,[AC_PrixTTC],[AC_Arrondi],[AC_QteMont],[EG_Champ]\n" +
-                        "      ,[AC_PrixDev],[AC_Devise],[CT_Num],[AC_Remise]\n" +
-                        "      ,[AC_Calcul],[AC_TypeRem],[AC_RefClient],[AC_CoefNouv]\n" +
-                        "      ,[AC_PrixVenNouv],[AC_PrixDevNouv],[AC_RemiseNouv],[AC_DateApplication]\n" +
-                        "      ,[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag]\n" +
-                        " FROM F_ARTCLIENT_DEST dest    \n" +
-                        " LEFT JOIN (SELECT [AR_Ref],[AC_Categorie] FROM F_ARTCLIENT) src    \n" +
-                        " ON dest.[AR_Ref] = src.[AR_Ref]    \n" +
-                        " AND dest.[AC_Categorie] = src.[AC_Categorie]\n" +
-                        " WHERE src.[AR_Ref] IS NULL ;  \n" +
-                        " IF OBJECT_ID('F_ARTCLIENT_DEST') IS NOT NULL  \n" +
-                        " DROP TABLE F_ARTCLIENT_DEST; \n" +
-                        " END TRY\n" +
-                        " BEGIN CATCH \n" +
-                        "INSERT INTO config.DB_Errors\n" +
-                        "    VALUES\n" +
-                        "  (SUSER_SNAME(),\n" +
-                        "   ERROR_NUMBER(),\n" +
-                        "   ERROR_STATE(),\n" +
-                        "   ERROR_SEVERITY(),\n" +
-                        "   ERROR_LINE(),\n" +
-                        "   ERROR_PROCEDURE(),\n" +
-                        "   ERROR_MESSAGE(),\n" +
-                        "   'Insert '+' "+filename+"',\n" +
-                        "   'F_ARTCLIENT',\n" +
-                        "   GETDATE());\n" +
-                        "END CATCH";
+                        """
+                                 BEGIN TRY SET DATEFORMAT ymd;
+                                 IF OBJECT_ID('F_ARTCLIENT_DEST') IS NOT NULL
+                                 INSERT INTO [dbo].[F_ARTCLIENT]
+                                 ([AR_Ref],[AC_Categorie],[AC_PrixVen],[AC_Coef]
+                                      ,[AC_PrixTTC],[AC_Arrondi],[AC_QteMont],[EG_Champ]
+                                      ,[AC_PrixDev],[AC_Devise],[CT_Num],[AC_Remise]
+                                      ,[AC_Calcul],[AC_TypeRem],[AC_RefClient],[AC_CoefNouv]
+                                      ,[AC_PrixVenNouv],[AC_PrixDevNouv],[AC_RemiseNouv],[AC_DateApplication]
+                                      ,[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag])
+
+                                 SELECT dest.[AR_Ref],dest.[AC_Categorie],[AC_PrixVen],[AC_Coef]
+                                      ,[AC_PrixTTC],[AC_Arrondi],[AC_QteMont],[EG_Champ]
+                                      ,[AC_PrixDev],[AC_Devise],[CT_Num],[AC_Remise]
+                                      ,[AC_Calcul],[AC_TypeRem],[AC_RefClient],[AC_CoefNouv]
+                                      ,[AC_PrixVenNouv],[AC_PrixDevNouv],[AC_RemiseNouv],[AC_DateApplication]
+                                      ,[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag]
+                                 FROM F_ARTCLIENT_DEST dest
+                                 LEFT JOIN (SELECT [AR_Ref],[AC_Categorie] FROM F_ARTCLIENT) src
+                                 ON dest.[AR_Ref] = src.[AR_Ref]
+                                 AND dest.[AC_Categorie] = src.[AC_Categorie]
+                                 WHERE src.[AR_Ref] IS NULL ;
+                                 IF OBJECT_ID('F_ARTCLIENT_DEST') IS NOT NULL
+                                 DROP TABLE F_ARTCLIENT_DEST;
+                                 END TRY
+                                 BEGIN CATCH
+                                INSERT INTO config.DB_Errors
+                                    VALUES
+                                  (SUSER_SNAME(),
+                                   ERROR_NUMBER(),
+                                   ERROR_STATE(),
+                                   ERROR_SEVERITY(),
+                                   ERROR_LINE(),
+                                   ERROR_PROCEDURE(),
+                                   ERROR_MESSAGE(),
+                                   'Insert '+' %s',
+                                   'F_ARTCLIENT',
+                                   GETDATE());
+                                END CATCH\
+                                """.formatted(filename);
     }
 
 
@@ -63,7 +64,7 @@ public class ArtClient extends Table{
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("AR_Ref,AC_Categorie", "'AR_Ref','AC_Categorie','CT_Num'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "AR_Ref,AC_Categorie", "'AR_Ref','AC_Categorie','CT_Num'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteTempTable(sqlCon, tableName + "_DEST");
@@ -83,12 +84,13 @@ public class ArtClient extends Table{
     public static void deleteArtClient(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_ARTCLIENT  \n" +
-                " WHERE EXISTS (SELECT 1 FROM F_ARTCLIENT_SUPPR WHERE F_ARTCLIENT_SUPPR.AR_Ref = F_ARTCLIENT.AR_Ref" +
-                "   AND F_ARTCLIENT_SUPPR.AC_Categorie = F_ARTCLIENT.AC_Categorie )  \n" +
-                "  \n" +
-                " IF OBJECT_ID('F_ARTCLIENT_SUPPR') IS NOT NULL  \n" +
-                " DROP TABLE F_ARTCLIENT_SUPPR ;";
+                """
+                         DELETE FROM F_ARTCLIENT
+                         WHERE EXISTS (SELECT 1 FROM F_ARTCLIENT_SUPPR WHERE F_ARTCLIENT_SUPPR.AR_Ref = F_ARTCLIENT.AR_Ref   AND F_ARTCLIENT_SUPPR.AC_Categorie = F_ARTCLIENT.AC_Categorie )
+
+                         IF OBJECT_ID('F_ARTCLIENT_SUPPR') IS NOT NULL
+                         DROP TABLE F_ARTCLIENT_SUPPR ;\
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

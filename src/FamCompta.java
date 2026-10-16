@@ -10,42 +10,40 @@ public class FamCompta extends Table {
 
     public static String insert(String filename)
     {
-        return          " BEGIN TRY " +
+        return          """
+                 BEGIN TRY  SET DATEFORMAT ymd;
+                 IF OBJECT_ID('F_FAMCOMPTA_DEST') IS NOT NULL
+                 INSERT INTO [dbo].[F_FAMCOMPTA]
+                     ([FA_CodeFamille],[FCP_Type],[FCP_Champ],[FCP_ComptaCPT_CompteG]
+                      ,[FCP_ComptaCPT_CompteA],[FCP_ComptaCPT_Taxe1],[FCP_ComptaCPT_Taxe2],[FCP_ComptaCPT_Taxe3]
+                      ,[FCP_TypeFacture],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag])
 
-                        " SET DATEFORMAT ymd;\n" +
-
-                        " IF OBJECT_ID('F_FAMCOMPTA_DEST') IS NOT NULL\n"+
-                        " INSERT INTO [dbo].[F_FAMCOMPTA] \n" +
-                        "\t ([FA_CodeFamille],[FCP_Type],[FCP_Champ],[FCP_ComptaCPT_CompteG]\n" +
-                        "      ,[FCP_ComptaCPT_CompteA],[FCP_ComptaCPT_Taxe1],[FCP_ComptaCPT_Taxe2],[FCP_ComptaCPT_Taxe3]\n" +
-                        "      ,[FCP_TypeFacture],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag]) \n" +
-                        "\t\n" +
-                        " SELECT dest.[FA_CodeFamille],dest.[FCP_Type],dest.[FCP_Champ],[FCP_ComptaCPT_CompteG]\n" +
-                        "      ,[FCP_ComptaCPT_CompteA],[FCP_ComptaCPT_Taxe1],[FCP_ComptaCPT_Taxe2],[FCP_ComptaCPT_Taxe3]\n" +
-                        "      ,[FCP_TypeFacture],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag] \n" +
-                        " FROM F_FAMCOMPTA_DEST dest   \n" +
-                        " LEFT JOIN (SELECT [FA_CodeFamille],[FCP_Type],[FCP_Champ] FROM F_FAMCOMPTA) src   \n" +
-                        " ON dest.[FA_CodeFamille] = src.[FA_CodeFamille]   \n" +
-                        " AND \tdest.FCP_Type = src.FCP_Type \n" +
-                        " AND \tdest.FCP_Champ = src.FCP_Champ \n" +
-                        " WHERE src.[FA_CodeFamille] IS NULL ; \n" +
-                        " IF OBJECT_ID('F_FAMCOMPTA_DEST') IS NOT NULL \n" +
-                        " DROP TABLE F_FAMCOMPTA_DEST;" +
-                        " END TRY\n" +
-                        " BEGIN CATCH \n" +
-                        "INSERT INTO config.DB_Errors\n" +
-                        "    VALUES\n" +
-                        "  (SUSER_SNAME(),\n" +
-                        "   ERROR_NUMBER(),\n" +
-                        "   ERROR_STATE(),\n" +
-                        "   ERROR_SEVERITY(),\n" +
-                        "   ERROR_LINE(),\n" +
-                        "   ERROR_PROCEDURE(),\n" +
-                        "   ERROR_MESSAGE(),\n" +
-                        "   'Insert '+ ' "+filename+"',\n" +
-                        "   'F_FAMCOMPTA',\n" +
-                        "   GETDATE());\n" +
-                        "END CATCH";
+                 SELECT dest.[FA_CodeFamille],dest.[FCP_Type],dest.[FCP_Champ],[FCP_ComptaCPT_CompteG]
+                      ,[FCP_ComptaCPT_CompteA],[FCP_ComptaCPT_Taxe1],[FCP_ComptaCPT_Taxe2],[FCP_ComptaCPT_Taxe3]
+                      ,[FCP_TypeFacture],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag]
+                 FROM F_FAMCOMPTA_DEST dest
+                 LEFT JOIN (SELECT [FA_CodeFamille],[FCP_Type],[FCP_Champ] FROM F_FAMCOMPTA) src
+                 ON dest.[FA_CodeFamille] = src.[FA_CodeFamille]
+                 AND     dest.FCP_Type = src.FCP_Type
+                 AND     dest.FCP_Champ = src.FCP_Champ
+                 WHERE src.[FA_CodeFamille] IS NULL ;
+                 IF OBJECT_ID('F_FAMCOMPTA_DEST') IS NOT NULL
+                 DROP TABLE F_FAMCOMPTA_DEST; END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_FAMCOMPTA',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
 
     }
 
@@ -60,7 +58,7 @@ public class FamCompta extends Table {
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("FA_CodeFamille,FCP_Type,FCP_Champ", "'FA_CodeFamille','FCP_Type','FCP_Champ'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "FA_CodeFamille,FCP_Type,FCP_Champ", "'FA_CodeFamille','FCP_Type','FCP_Champ'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
                 deleteTempTable(sqlCon, tableName + "_DEST");
 
@@ -78,12 +76,13 @@ public class FamCompta extends Table {
     public static void deleteFamCompta(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_FAMCOMPTA  \n" +
-                " WHERE EXISTS (SELECT 1 FROM F_FAMCOMPTA_SUPPR WHERE F_FAMCOMPTA_SUPPR.FA_CodeFamille = F_FAMCOMPTA.FA_CodeFamille" +
-                "   AND F_FAMCOMPTA_SUPPR.FCP_Type = F_FAMCOMPTA.FCP_Type AND F_FAMCOMPTA_SUPPR.FCP_Champ = F_FAMCOMPTA.FCP_Champ)  \n" +
-                "  \n" +
-                " IF OBJECT_ID('F_FAMCOMPTA_SUPPR') IS NOT NULL  \n" +
-                " DROP TABLE F_FAMCOMPTA_SUPPR ;";
+                """
+                         DELETE FROM F_FAMCOMPTA
+                         WHERE EXISTS (SELECT 1 FROM F_FAMCOMPTA_SUPPR WHERE F_FAMCOMPTA_SUPPR.FA_CodeFamille = F_FAMCOMPTA.FA_CodeFamille   AND F_FAMCOMPTA_SUPPR.FCP_Type = F_FAMCOMPTA.FCP_Type AND F_FAMCOMPTA_SUPPR.FCP_Champ = F_FAMCOMPTA.FCP_Champ)
+
+                         IF OBJECT_ID('F_FAMCOMPTA_SUPPR') IS NOT NULL
+                         DROP TABLE F_FAMCOMPTA_SUPPR ;\
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

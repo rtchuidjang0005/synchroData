@@ -11,43 +11,44 @@ public class ArtFourniss extends Table {
     public static String insert(String filename)
     {
         return
-                        "  BEGIN TRY " +
-                        " SET DATEFORMAT ymd;\n" +
-                        " IF OBJECT_ID('F_ARTFOURNISS_DEST') IS NOT NULL\n"+
-                        "  INSERT INTO [dbo].[F_ARTFOURNISS]   \n" +
-                        "  ([AR_Ref],[CT_Num],[AF_RefFourniss],[AF_PrixAch],[AF_Unite],[AF_Conversion],[AF_DelaiAppro]\n" +
-                        "      ,[AF_Garantie],[AF_Colisage],[AF_QteMini],[AF_QteMont],[EG_Champ],[AF_Principal]\n" +
-                        "      ,[AF_PrixDev],[AF_Devise],[AF_Remise],[AF_ConvDiv],[AF_TypeRem],[AF_CodeBarre]\n" +
-                        "      ,[AF_PrixAchNouv],[AF_PrixDevNouv],[AF_RemiseNouv],[AF_DateApplication],[cbProt],[cbCreateur]\n" +
-                        "      ,[cbModification],[cbReplication],[cbFlag])   \n" +
-                        "   \n" +
-                        "  SELECT dest.[AR_Ref],dest.[CT_Num],[AF_RefFourniss],[AF_PrixAch],[AF_Unite],[AF_Conversion],[AF_DelaiAppro]\n" +
-                        "      ,[AF_Garantie],[AF_Colisage],[AF_QteMini],[AF_QteMont],[EG_Champ],[AF_Principal]\n" +
-                        "      ,[AF_PrixDev],[AF_Devise],[AF_Remise],[AF_ConvDiv],[AF_TypeRem],[AF_CodeBarre]\n" +
-                        "      ,[AF_PrixAchNouv],[AF_PrixDevNouv],[AF_RemiseNouv],[AF_DateApplication],[cbProt],[cbCreateur]\n" +
-                        "      ,[cbModification],[cbReplication],[cbFlag] \n" +
-                        "  FROM F_ARTFOURNISS_DEST dest     \n" +
-                        "  LEFT JOIN (SELECT [AR_Ref],[CT_Num] FROM F_ARTFOURNISS) src     \n" +
-                        "  ON dest.[AR_Ref] = src.[AR_Ref]     \n" +
-                        "  AND dest.[CT_Num] = src.[CT_Num] \n" +
-                        "  WHERE src.[AR_Ref] IS NULL ;   \n" +
-                        "  IF OBJECT_ID('F_ARTFOURNISS_DEST') IS NOT NULL   \n" +
-                        "  DROP TABLE F_ARTFOURNISS_DEST\n" +
-                        " END TRY\n" +
-                        " BEGIN CATCH \n" +
-                        "INSERT INTO config.DB_Errors\n" +
-                        "    VALUES\n" +
-                        "  (SUSER_SNAME(),\n" +
-                        "   ERROR_NUMBER(),\n" +
-                        "   ERROR_STATE(),\n" +
-                        "   ERROR_SEVERITY(),\n" +
-                        "   ERROR_LINE(),\n" +
-                        "   ERROR_PROCEDURE(),\n" +
-                        "   ERROR_MESSAGE(),\n" +
-                        "   'Insert '+ ' "+filename+"',\n" +
-                        "   'F_ARTFOURNISS',\n" +
-                        "   GETDATE());\n" +
-                        "END CATCH";
+                        """
+                                  BEGIN TRY  SET DATEFORMAT ymd;
+                                 IF OBJECT_ID('F_ARTFOURNISS_DEST') IS NOT NULL
+                                  INSERT INTO [dbo].[F_ARTFOURNISS]
+                                  ([AR_Ref],[CT_Num],[AF_RefFourniss],[AF_PrixAch],[AF_Unite],[AF_Conversion],[AF_DelaiAppro]
+                                      ,[AF_Garantie],[AF_Colisage],[AF_QteMini],[AF_QteMont],[EG_Champ],[AF_Principal]
+                                      ,[AF_PrixDev],[AF_Devise],[AF_Remise],[AF_ConvDiv],[AF_TypeRem],[AF_CodeBarre]
+                                      ,[AF_PrixAchNouv],[AF_PrixDevNouv],[AF_RemiseNouv],[AF_DateApplication],[cbProt],[cbCreateur]
+                                      ,[cbModification],[cbReplication],[cbFlag])
+
+                                  SELECT dest.[AR_Ref],dest.[CT_Num],[AF_RefFourniss],[AF_PrixAch],[AF_Unite],[AF_Conversion],[AF_DelaiAppro]
+                                      ,[AF_Garantie],[AF_Colisage],[AF_QteMini],[AF_QteMont],[EG_Champ],[AF_Principal]
+                                      ,[AF_PrixDev],[AF_Devise],[AF_Remise],[AF_ConvDiv],[AF_TypeRem],[AF_CodeBarre]
+                                      ,[AF_PrixAchNouv],[AF_PrixDevNouv],[AF_RemiseNouv],[AF_DateApplication],[cbProt],[cbCreateur]
+                                      ,[cbModification],[cbReplication],[cbFlag]
+                                  FROM F_ARTFOURNISS_DEST dest
+                                  LEFT JOIN (SELECT [AR_Ref],[CT_Num] FROM F_ARTFOURNISS) src
+                                  ON dest.[AR_Ref] = src.[AR_Ref]
+                                  AND dest.[CT_Num] = src.[CT_Num]
+                                  WHERE src.[AR_Ref] IS NULL ;
+                                  IF OBJECT_ID('F_ARTFOURNISS_DEST') IS NOT NULL
+                                  DROP TABLE F_ARTFOURNISS_DEST
+                                 END TRY
+                                 BEGIN CATCH
+                                INSERT INTO config.DB_Errors
+                                    VALUES
+                                  (SUSER_SNAME(),
+                                   ERROR_NUMBER(),
+                                   ERROR_STATE(),
+                                   ERROR_SEVERITY(),
+                                   ERROR_LINE(),
+                                   ERROR_PROCEDURE(),
+                                   ERROR_MESSAGE(),
+                                   'Insert '+ ' %s',
+                                   'F_ARTFOURNISS',
+                                   GETDATE());
+                                END CATCH\
+                                """.formatted(filename);
     }
 
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
@@ -61,7 +62,7 @@ public class ArtFourniss extends Table {
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("AR_Ref,CT_Num", "'AR_Ref','CT_Num'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "AR_Ref,CT_Num", "'AR_Ref','CT_Num'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteTempTable(sqlCon, tableName + "_DEST");
@@ -81,12 +82,13 @@ public class ArtFourniss extends Table {
     public static void deleteArtFourniss(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_ARTFOURNISS  \n" +
-                " WHERE EXISTS (SELECT 1 FROM F_ARTFOURNISS_SUPPR WHERE F_ARTFOURNISS_SUPPR.AR_Ref = F_ARTFOURNISS.AR_Ref AND F_ARTFOURNISS_SUPPR.CT_Num = F_ARTFOURNISS.CT_Num" +
-                "   )  \n" +
-                "  \n" +
-                " IF OBJECT_ID('F_ARTFOURNISS_SUPPR') IS NOT NULL  \n" +
-                " DROP TABLE F_ARTFOURNISS_SUPPR ;";
+                """
+                         DELETE FROM F_ARTFOURNISS
+                         WHERE EXISTS (SELECT 1 FROM F_ARTFOURNISS_SUPPR WHERE F_ARTFOURNISS_SUPPR.AR_Ref = F_ARTFOURNISS.AR_Ref AND F_ARTFOURNISS_SUPPR.CT_Num = F_ARTFOURNISS.CT_Num   )
+
+                         IF OBJECT_ID('F_ARTFOURNISS_SUPPR') IS NOT NULL
+                         DROP TABLE F_ARTFOURNISS_SUPPR ;\
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

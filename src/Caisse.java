@@ -9,89 +9,89 @@ public class Caisse extends Table {
     public static String insert(String filename)
     {
         return
-                " BEGIN TRY \n" +
-                        "SET DATEFORMAT ymd;\n" +
-                        "IF OBJECT_ID('tempdb..#TmpCaisse') IS NOT NULL\n" +
-                        "    DROP TABLE #TmpCaisse\n"+
-                        "\n" +
-                        "SELECT CA_No = ISNULL((SELECT MAX(CA_No) FROM F_CAISSE),0) + ROW_NUMBER() OVER(ORDER BY dest.CA_No) \n" +
-                        ",[CA_Intitule],DE_No = ISNULL(dep.DE_No,dest.[DE_No]),[CO_No] \n" +
-                        "           ,[CO_NoCaissier],[CT_Num],[JO_Num],[CA_IdentifCaissier] \n" +
-                        "           ,[CA_DateCreation],[N_Comptoir],[N_Clavier] \n" +
-                        "   ,[CA_LignesAfficheur],[CA_ColonnesAfficheur],[CA_ImpTicket] \n" +
-                        "           ,[CA_SaisieVendeur],[CA_Souche],[cbProt],[cbCreateur] \n" +
-                        "           ,[cbModification],[cbReplication],[cbFlag] \n" +
-                        "   ,CA_NoSource = dest.CA_No, dest.cbMarqSource,dest.DatabaseSource,[CA_NoSourceCai] = src.CA_NoSource \n" +
-                        "   INTO #TmpCaisse \n" +
-                        "FROM F_CAISSE_DEST dest \n" +
-                        "LEFT JOIN (SELECT CA_NoSource,DatabaseSource FROM F_CAISSE) src \n" +
-                        "ON ISNULL(src.CA_NoSource,0) = ISNULL(dest.CA_No,0) \n" +
-                        "AND ISNULL(src.DatabaseSource,'') = ISNULL(dest.DatabaseSource,'') \n" +
-                        "LEFT JOIN (SELECT DE_NoSource,DatabaseSource,DE_No FROM F_DEPOT) dep \n" +
-                        "ON ISNULL(dep.DE_NoSource,0) = ISNULL(dest.DE_No,0) \n" +
-                        "AND ISNULL(dep.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'') " +
-                        "\n" +
-                        "UPDATE dwh SET\n" +
-                        "      [CA_Intitule] = tmp.CA_Intitule\n" +
-                        "      ,[DE_No] = tmp.DE_No\n" +
-                        "      ,[CO_No] = tmp.CO_No\n" +
-                        "      ,[CO_NoCaissier] = tmp.CO_NoCaissier\n" +
-                        "      ,[CT_Num] = tmp.CT_Num\n" +
-                        "      ,[JO_Num] = tmp.JO_Num\n" +
-                        "      ,[CA_IdentifCaissier] = tmp.CA_IdentifCaissier\n" +
-                        "      ,[CA_DateCreation] = tmp.CA_DateCreation\n" +
-                        "      ,[N_Comptoir] = tmp.N_Comptoir\n" +
-                        "      ,[N_Clavier] = tmp.N_Clavier\n" +
-                        "      ,[CA_LignesAfficheur] = tmp.CA_LignesAfficheur\n" +
-                        "      ,[CA_ColonnesAfficheur] = tmp.CA_ColonnesAfficheur\n" +
-                        "      ,[CA_ImpTicket] = tmp.CA_ImpTicket\n" +
-                        "      ,[CA_SaisieVendeur] = tmp.CA_SaisieVendeur\n" +
-                        "      ,[CA_Souche] = tmp.CA_Souche\n" +
-                        "      ,[cbProt] = tmp.cbProt\n" +
-                        "      ,[cbCreateur] = tmp.cbCreateur\n" +
-                        "      ,[cbModification] = tmp.cbModification\n" +
-                        "      ,[cbReplication] = tmp.cbReplication\n" +
-                        "      ,[cbFlag] = tmp.cbFlag\n" +
-                        "FROM F_CAISSE dwh\n" +
-                        "INNER JOIN #TmpCaisse tmp ON dwh.CA_NoSource = tmp.CA_NoSource\n" +
-                        "AND ISNULL(dwh.DatabaseSource,'') = ISNULL(tmp.DatabaseSource,'')\n" +
-                        "\n" +
-                        "INSERT INTO [dbo].[F_CAISSE]\n" +
-                        "           ([CA_No],[CA_Intitule],[DE_No],[CO_No]\n" +
-                        "           ,[CO_NoCaissier],[CT_Num],[JO_Num],[CA_IdentifCaissier]\n" +
-                        "           ,[CA_DateCreation],[N_Comptoir],[N_Clavier]\n" +
-                        "\t\t   ,[CA_LignesAfficheur],[CA_ColonnesAfficheur],[CA_ImpTicket]\n" +
-                        "           ,[CA_SaisieVendeur],[CA_Souche],[cbProt],[cbCreateur]\n" +
-                        "           ,[cbModification],[cbReplication],[cbFlag]\n" +
-                        "\t\t   ,CA_NoSource,cbMarqSource,DatabaseSource)\n" +
-                        "\n" +
-                        "SELECT [CA_No] \n" +
-                        ", [CA_Intitule],[DE_No],[CO_No] \n" +
-                        "           ,[CO_NoCaissier],[CT_Num],[JO_Num],[CA_IdentifCaissier] \n" +
-                        "           ,[CA_DateCreation],[N_Comptoir],[N_Clavier] \n" +
-                        "   ,[CA_LignesAfficheur],[CA_ColonnesAfficheur],[CA_ImpTicket] \n" +
-                        "           ,[CA_SaisieVendeur],[CA_Souche],[cbProt],[cbCreateur] \n" +
-                        "           ,[cbModification],[cbReplication],[cbFlag] \n" +
-                        "   ,CA_NoSource, cbMarqSource,DatabaseSource \n" +
-                        "FROM #TmpCaisse \n" +
-                        "WHERE [CA_NoSourceCai]  IS NULL " +
-                        "\n" +
-                        "END TRY" +
-                        " BEGIN CATCH  \n" +
-                        "INSERT INTO config.DB_Errors \n" +
-                        "    VALUES \n" +
-                        "  (SUSER_SNAME(), \n" +
-                        "   ERROR_NUMBER(), \n" +
-                        "   ERROR_STATE(), \n" +
-                        "   ERROR_SEVERITY(), \n" +
-                        "   ERROR_LINE(), \n" +
-                        "   ERROR_PROCEDURE(), \n" +
-                        "   ERROR_MESSAGE(), \n" +
-                        "   'Insert '+ ' "+filename+"', \n" +
-                        "   'F_CAISSE', \n" +
-                        "   GETDATE()); \n" +
-                        "END CATCH\n" +
-                        "\n";
+                """
+                         BEGIN TRY
+                        SET DATEFORMAT ymd;
+                        IF OBJECT_ID('tempdb..#TmpCaisse') IS NOT NULL
+                            DROP TABLE #TmpCaisse
+
+                        SELECT CA_No = ISNULL((SELECT MAX(CA_No) FROM F_CAISSE),0) + ROW_NUMBER() OVER(ORDER BY dest.CA_No)
+                        ,[CA_Intitule],DE_No = ISNULL(dep.DE_No,dest.[DE_No]),[CO_No]
+                                   ,[CO_NoCaissier],[CT_Num],[JO_Num],[CA_IdentifCaissier]
+                                   ,[CA_DateCreation],[N_Comptoir],[N_Clavier]
+                           ,[CA_LignesAfficheur],[CA_ColonnesAfficheur],[CA_ImpTicket]
+                                   ,[CA_SaisieVendeur],[CA_Souche],[cbProt],[cbCreateur]
+                                   ,[cbModification],[cbReplication],[cbFlag]
+                           ,CA_NoSource = dest.CA_No, dest.cbMarqSource,dest.DatabaseSource,[CA_NoSourceCai] = src.CA_NoSource
+                           INTO #TmpCaisse
+                        FROM F_CAISSE_DEST dest
+                        LEFT JOIN (SELECT CA_NoSource,DatabaseSource FROM F_CAISSE) src
+                        ON ISNULL(src.CA_NoSource,0) = ISNULL(dest.CA_No,0)
+                        AND ISNULL(src.DatabaseSource,'') = ISNULL(dest.DatabaseSource,'')
+                        LEFT JOIN (SELECT DE_NoSource,DatabaseSource,DE_No FROM F_DEPOT) dep
+                        ON ISNULL(dep.DE_NoSource,0) = ISNULL(dest.DE_No,0)
+                        AND ISNULL(dep.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'')
+                        IF {{UPDATE_ENABLED}} = 1
+                        UPDATE dwh SET
+                              [CA_Intitule] = tmp.CA_Intitule
+                              ,[DE_No] = tmp.DE_No
+                              ,[CO_No] = tmp.CO_No
+                              ,[CO_NoCaissier] = tmp.CO_NoCaissier
+                              ,[CT_Num] = tmp.CT_Num
+                              ,[JO_Num] = tmp.JO_Num
+                              ,[CA_IdentifCaissier] = tmp.CA_IdentifCaissier
+                              ,[CA_DateCreation] = tmp.CA_DateCreation
+                              ,[N_Comptoir] = tmp.N_Comptoir
+                              ,[N_Clavier] = tmp.N_Clavier
+                              ,[CA_LignesAfficheur] = tmp.CA_LignesAfficheur
+                              ,[CA_ColonnesAfficheur] = tmp.CA_ColonnesAfficheur
+                              ,[CA_ImpTicket] = tmp.CA_ImpTicket
+                              ,[CA_SaisieVendeur] = tmp.CA_SaisieVendeur
+                              ,[CA_Souche] = tmp.CA_Souche
+                              ,[cbProt] = tmp.cbProt
+                              ,[cbCreateur] = tmp.cbCreateur
+                              ,[cbModification] = tmp.cbModification
+                              ,[cbReplication] = tmp.cbReplication
+                              ,[cbFlag] = tmp.cbFlag
+                        FROM F_CAISSE dwh
+                        INNER JOIN #TmpCaisse tmp ON dwh.CA_NoSource = tmp.CA_NoSource
+                        AND ISNULL(dwh.DatabaseSource,'') = ISNULL(tmp.DatabaseSource,'')
+
+                        INSERT INTO [dbo].[F_CAISSE]
+                                   ([CA_No],[CA_Intitule],[DE_No],[CO_No]
+                                   ,[CO_NoCaissier],[CT_Num],[JO_Num],[CA_IdentifCaissier]
+                                   ,[CA_DateCreation],[N_Comptoir],[N_Clavier]
+                                   ,[CA_LignesAfficheur],[CA_ColonnesAfficheur],[CA_ImpTicket]
+                                   ,[CA_SaisieVendeur],[CA_Souche],[cbProt],[cbCreateur]
+                                   ,[cbModification],[cbReplication],[cbFlag]
+                                   ,CA_NoSource,cbMarqSource,DatabaseSource)
+
+                        SELECT [CA_No]
+                        , [CA_Intitule],[DE_No],[CO_No]
+                                   ,[CO_NoCaissier],[CT_Num],[JO_Num],[CA_IdentifCaissier]
+                                   ,[CA_DateCreation],[N_Comptoir],[N_Clavier]
+                           ,[CA_LignesAfficheur],[CA_ColonnesAfficheur],[CA_ImpTicket]
+                                   ,[CA_SaisieVendeur],[CA_Souche],[cbProt],[cbCreateur]
+                                   ,[cbModification],[cbReplication],[cbFlag]
+                           ,CA_NoSource, cbMarqSource,DatabaseSource
+                        FROM #TmpCaisse
+                        WHERE [CA_NoSourceCai]  IS NULL
+                        END TRY BEGIN CATCH
+                        INSERT INTO config.DB_Errors
+                            VALUES
+                          (SUSER_SNAME(),
+                           ERROR_NUMBER(),
+                           ERROR_STATE(),
+                           ERROR_SEVERITY(),
+                           ERROR_LINE(),
+                           ERROR_PROCEDURE(),
+                           ERROR_MESSAGE(),
+                           'Insert '+ ' %s',
+                           'F_CAISSE',
+                           GETDATE());
+                        END CATCH
+
+                        """.formatted(filename);
     }
 
     public static void sendDataElement(Connection sqlCon, String path,String database,int unibase)
@@ -121,7 +121,7 @@ public class Caisse extends Table {
         } else {
             for (String filename : children){
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
-                sendData(sqlCon, path, filename, insert(filename));
+                sendData(sqlCon, path, filename, applyUpdateFlag(insert(filename), tableName));
                 //deleteTempTable(sqlCon, tableName+"_DEST");
             }
         }
@@ -138,13 +138,15 @@ public class Caisse extends Table {
     public static String deleteCaisse()
     {
         return
-                " DELETE src\n" +
-                " FROM F_CAISSE src\n" +
-                " INNER JOIN F_CAISSE_SUPPR del\n" +
-                " ON ISNULL(src.CA_No,0) = ISNULL(del.CA_No,0) \n" +
-                " AND ISNULL(src.DatabaseSource,'') = ISNULL(del.DatabaseSource,'') ;\n" +
-                " IF OBJECT_ID('F_CAISSE_SUPPR') IS NOT NULL\n" +
-                " DROP TABLE F_CAISSE_SUPPR ;";
+                """
+                         DELETE src
+                         FROM F_CAISSE src
+                         INNER JOIN F_CAISSE_SUPPR del
+                         ON ISNULL(src.CA_No,0) = ISNULL(del.CA_No,0)
+                         AND ISNULL(src.DatabaseSource,'') = ISNULL(del.DatabaseSource,'') ;
+                         IF OBJECT_ID('F_CAISSE_SUPPR') IS NOT NULL
+                         DROP TABLE F_CAISSE_SUPPR ;\
+                        """;
     }
 
 }

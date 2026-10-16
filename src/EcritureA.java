@@ -11,52 +11,55 @@ public class EcritureA extends Table {
 
     public static String list()
     {
-        return   "SELECT\t[EC_No],[N_Analytique],[EA_Ligne],[CA_Num]\n" +
-                "\t\t,[EA_Montant],[EA_Quantite],[cbProt],[cbMarq]\n" +
-                "\t\t,[cbCreateur],[cbModification],[cbReplication],[cbFlag]\n" +
-                "\t\t,cbMarqSource = [cbMarq]\n" +
-                "\t\t,[DataBaseSource] = '" + dbSource + "' \n" +
-                "FROM\t[F_ECRITUREA]" +
-                "WHERE cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='F_ECRITUREA'),'1900-01-01')";
+        return   """
+                SELECT    [EC_No],[N_Analytique],[EA_Ligne],[CA_Num]
+                        ,[EA_Montant],[EA_Quantite],[cbProt],[cbMarq]
+                        ,[cbCreateur],[cbModification],[cbReplication],[cbFlag]
+                        ,cbMarqSource = [cbMarq]
+                        ,[DataBaseSource] = '%s'
+                FROM    [F_ECRITUREA]WHERE cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='F_ECRITUREA'),'1900-01-01')\
+                """.formatted(dbSource);
     }
 
     public static String insert(String filename)
     {
-        return  "BEGIN TRY" +
-                "                   \n" +
-                " IF OBJECT_ID('F_ECRITUREA_DEST') IS NOT NULL\n"+
-                "INSERT INTO F_ECRITUREA ([EC_No],[N_Analytique],[EA_Ligne],[CA_Num] \n" +
-                "\t\t,[EA_Montant],[EA_Quantite],[cbProt] \n" +
-                "\t\t,[cbCreateur],[cbModification],[cbReplication],[cbFlag] \n" +
-                "\t\t,[DataBaseSource],cbMarqSource)\n" +
-                "SELECT\tecr.[EC_No],[N_Analytique],[EA_Ligne],[CA_Num] \n" +
-                "\t\t,[EA_Montant],[EA_Quantite],[cbProt] \n" +
-                "\t\t,[cbCreateur],[cbModification],[cbReplication],[cbFlag] \n" +
-                "\t\t,dest.[DataBaseSource],dest.cbMarqSource\n" +
-                "FROM\t[F_ECRITUREA_DEST] dest\n" +
-                "LEFT JOIN (SELECT cbMarqSource,DataBaseSource FROM F_ECRITUREA) src\n" +
-                "\tON\tISNULL(src.cbMarqSource,0) = ISNULL(dest.cbMarqSource,0)\n" +
-                "\tAND\t\tISNULL(src.DatabaseSource,'') = ISNULL(dest.DatabaseSource,'')\n" +
-                "LEFT JOIN (SELECT EC_No,EC_NoSource,DatabaseSource FROM F_ECRITUREC) ecr\n" +
-                "\tON\tISNULL(ecr.EC_NoSource,0) = ISNULL(dest.EC_No,0)\n" +
-                "\tAND ISNULL(ecr.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'')" +
-                "\nWHERE ecr.EC_No IS NOT NULL\n" +
-                "\nAND src.cbMarqSource IS NULL\n" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'F_ECRITUREA',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+        return  """
+                BEGIN TRY
+                 IF OBJECT_ID('F_ECRITUREA_DEST') IS NOT NULL
+                INSERT INTO F_ECRITUREA ([EC_No],[N_Analytique],[EA_Ligne],[CA_Num]
+                        ,[EA_Montant],[EA_Quantite],[cbProt]
+                        ,[cbCreateur],[cbModification],[cbReplication],[cbFlag]
+                        ,[DataBaseSource],cbMarqSource)
+                SELECT    ecr.[EC_No],[N_Analytique],[EA_Ligne],[CA_Num]
+                        ,[EA_Montant],[EA_Quantite],[cbProt]
+                        ,[cbCreateur],[cbModification],[cbReplication],[cbFlag]
+                        ,dest.[DataBaseSource],dest.cbMarqSource
+                FROM    [F_ECRITUREA_DEST] dest
+                LEFT JOIN (SELECT cbMarqSource,DataBaseSource FROM F_ECRITUREA) src
+                    ON    ISNULL(src.cbMarqSource,0) = ISNULL(dest.cbMarqSource,0)
+                    AND        ISNULL(src.DatabaseSource,'') = ISNULL(dest.DatabaseSource,'')
+                LEFT JOIN (SELECT EC_No,EC_NoSource,DatabaseSource FROM F_ECRITUREC) ecr
+                    ON    ISNULL(ecr.EC_NoSource,0) = ISNULL(dest.EC_No,0)
+                    AND ISNULL(ecr.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'')
+                WHERE ecr.EC_No IS NOT NULL
+
+                AND src.cbMarqSource IS NULL
+                 END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_ECRITUREA',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
 
     public static void sendDataElement(Connection  sqlCon, String path,String database,int unibase)
@@ -71,7 +74,7 @@ public class EcritureA extends Table {
                 dbSource = database;
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("", "'EC_No','N_Analytique'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "", "'EC_No','N_Analytique'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
                 deleteTempTable(sqlCon, tableName + "_DEST");
                 deleteEcritureA(sqlCon, path, filename);
@@ -90,11 +93,13 @@ public class EcritureA extends Table {
     public static void deleteEcritureA(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_ECRITUREA \n" +
-                " WHERE EXISTS (SELECT 1 FROM F_ECRITUREA_SUPPR WHERE F_ECRITUREA_SUPPR.EC_No = F_ECRITUREA.EC_No)  \n" +
-                "  \n" +
-                " IF OBJECT_ID('F_ECRITUREA_SUPPR') IS NOT NULL  \n" +
-                " DROP TABLE F_ECRITUREA_SUPPR ;";
+                """
+                         DELETE FROM F_ECRITUREA
+                         WHERE EXISTS (SELECT 1 FROM F_ECRITUREA_SUPPR WHERE F_ECRITUREA_SUPPR.EC_No = F_ECRITUREA.EC_No)
+
+                         IF OBJECT_ID('F_ECRITUREA_SUPPR') IS NOT NULL
+                         DROP TABLE F_ECRITUREA_SUPPR ;\
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

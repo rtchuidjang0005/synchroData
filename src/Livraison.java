@@ -10,40 +10,39 @@ public class Livraison extends Table {
 
     public static String insert(String filename)
     {
-        return  "BEGIN TRY " +
-                " SET DATEFORMAT ymd;\n" +
+        return  """
+                BEGIN TRY  SET DATEFORMAT ymd;
+                 IF OBJECT_ID('F_LIVRAISON_DEST') IS NOT NULL
+                INSERT INTO F_LIVRAISON ( [LI_No],[CT_Num],[LI_Intitule],[LI_Adresse],[LI_Complement],[LI_CodePostal],[LI_Ville]
+                ,[LI_CodeRegion],[LI_Pays],[LI_Contact],[N_Expedition],[N_Condition],[LI_Principal]
+                ,[LI_Telephone],[LI_Telecopie],[LI_EMail],[cbProt],[cbCreateur]
+                ,[cbModification],[cbReplication],[cbFlag],cbMarqSource,DataBaseSource,LI_NoSource)
 
-                " IF OBJECT_ID('F_LIVRAISON_DEST') IS NOT NULL\n"+
-                "INSERT INTO F_LIVRAISON ( [LI_No],[CT_Num],[LI_Intitule],[LI_Adresse],[LI_Complement],[LI_CodePostal],[LI_Ville]\n" +
-                ",[LI_CodeRegion],[LI_Pays],[LI_Contact],[N_Expedition],[N_Condition],[LI_Principal]\n" +
-                ",[LI_Telephone],[LI_Telecopie],[LI_EMail],[cbProt],[cbCreateur]\n" +
-                ",[cbModification],[cbReplication],[cbFlag],cbMarqSource,DataBaseSource,LI_NoSource) \n" +
-                "                                 \n" +
-                "SELECT (SELECT MAX(LI_No) FROM F_LIVRAISON) + ROW_NUMBER() OVER(ORDER BY dest.LI_No),dest.[CT_Num],[LI_Intitule],[LI_Adresse],[LI_Complement],[LI_CodePostal],[LI_Ville]\n" +
-                ",[LI_CodeRegion],[LI_Pays],[LI_Contact],[N_Expedition],[N_Condition],[LI_Principal]\n" +
-                ",[LI_Telephone],[LI_Telecopie],[LI_EMail],[cbProt],[cbCreateur]\n" +
-                ",[cbModification],[cbReplication],[cbFlag],dest.[cbMarqSource],dest.[dataBaseSource],dest.LI_No\n" +
-                "FROM F_LIVRAISON_DEST dest \n" +
-                "LEFT JOIN (SELECT [LI_NoSource],[CT_Num],[DatabaseSource] FROM F_LIVRAISON) src \n" +
-                "ON ISNULL(dest.[LI_No],0) = ISNULL(src.[LI_NoSource],0) \n" +
-                "AND dest.[CT_Num] = src.[CT_Num] \n" +
-                "AND ISNULL(dest.[DatabaseSource],'') = ISNULL(src.[DatabaseSource],'') \n" +
-                "WHERE src.[LI_NoSource] IS NULL ;" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'F_LIVRAISON',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+                SELECT (SELECT MAX(LI_No) FROM F_LIVRAISON) + ROW_NUMBER() OVER(ORDER BY dest.LI_No),dest.[CT_Num],[LI_Intitule],[LI_Adresse],[LI_Complement],[LI_CodePostal],[LI_Ville]
+                ,[LI_CodeRegion],[LI_Pays],[LI_Contact],[N_Expedition],[N_Condition],[LI_Principal]
+                ,[LI_Telephone],[LI_Telecopie],[LI_EMail],[cbProt],[cbCreateur]
+                ,[cbModification],[cbReplication],[cbFlag],dest.[cbMarqSource],dest.[dataBaseSource],dest.LI_No
+                FROM F_LIVRAISON_DEST dest
+                LEFT JOIN (SELECT [LI_NoSource],[CT_Num],[DatabaseSource] FROM F_LIVRAISON) src
+                ON ISNULL(dest.[LI_No],0) = ISNULL(src.[LI_NoSource],0)
+                AND dest.[CT_Num] = src.[CT_Num]
+                AND ISNULL(dest.[DatabaseSource],'') = ISNULL(src.[DatabaseSource],'')
+                WHERE src.[LI_NoSource] IS NULL ; END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_LIVRAISON',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
 
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
@@ -57,7 +56,7 @@ public class Livraison extends Table {
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("", "'LI_NoSource','LI_No','CT_Num','DataBaseSource'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "", "'LI_NoSource','LI_No','CT_Num','DataBaseSource'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteTempTable(sqlCon, tableName + "_DEST");
@@ -75,11 +74,13 @@ public class Livraison extends Table {
     public static void deleteLivraison(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_LIVRAISON \n" +
-                " WHERE EXISTS (SELECT 1 FROM F_LIVRAISON_SUPPR WHERE F_LIVRAISON_SUPPR.LI_No = F_LIVRAISON.LI_No AND F_LIVRAISON_SUPPR.CT_Num = F_LIVRAISON.CT_Num) \n" +
-                " \n" +
-                " IF OBJECT_ID('F_LIVRAISON_SUPPR') IS NOT NULL \n" +
-                " DROP TABLE F_LIVRAISON_SUPPR \n";
+                """
+                         DELETE FROM F_LIVRAISON
+                         WHERE EXISTS (SELECT 1 FROM F_LIVRAISON_SUPPR WHERE F_LIVRAISON_SUPPR.LI_No = F_LIVRAISON.LI_No AND F_LIVRAISON_SUPPR.CT_Num = F_LIVRAISON.CT_Num)
+
+                         IF OBJECT_ID('F_LIVRAISON_SUPPR') IS NOT NULL
+                         DROP TABLE F_LIVRAISON_SUPPR
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

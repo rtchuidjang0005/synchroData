@@ -10,32 +10,33 @@ public class PConditionnement extends Table{
 
     public static String insert(String filename)
     {
-        return  " BEGIN TRY " +
-                " SET DATEFORMAT ymd;\n" +
-                " IF OBJECT_ID('P_CONDITIONNEMENT_DEST') IS NOT NULL\n"+
-                "\tINSERT INTO P_CONDITIONNEMENT (\n" +
-                "\t[P_Conditionnement],[cbIndice])\n" +
-                "                                \n" +
-                "\tSELECT dest.[P_Conditionnement],dest.[cbIndice]\n" +
-                "\tFROM P_CONDITIONNEMENT_DEST dest\n" +
-                "\tLEFT JOIN (SELECT cbIndice FROM P_CONDITIONNEMENT) src\n" +
-                "\t\tON dest.cbIndice = src.cbIndice\n" +
-                "\tWHERE src.cbIndice IS NULL\n" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'P_CONDITIONNEMENT',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+        return  """
+                 BEGIN TRY  SET DATEFORMAT ymd;
+                 IF OBJECT_ID('P_CONDITIONNEMENT_DEST') IS NOT NULL
+                    INSERT INTO P_CONDITIONNEMENT (
+                    [P_Conditionnement],[cbIndice])
+
+                    SELECT dest.[P_Conditionnement],dest.[cbIndice]
+                    FROM P_CONDITIONNEMENT_DEST dest
+                    LEFT JOIN (SELECT cbIndice FROM P_CONDITIONNEMENT) src
+                        ON dest.cbIndice = src.cbIndice
+                    WHERE src.cbIndice IS NULL
+                 END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'P_CONDITIONNEMENT',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
     {
@@ -48,7 +49,7 @@ public class PConditionnement extends Table{
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("cbIndice", "'cbIndice'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "cbIndice", "'cbIndice'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteCondition(sqlCon, path, filename);
@@ -66,11 +67,13 @@ public class PConditionnement extends Table{
     public static void deleteCondition(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM P_CONDITIONNEMENT \n" +
-                " WHERE cbIndice IN(SELECT cbIndice FROM P_CONDITIONNEMENT_SUPPR) \n" +
-                " \n" +
-                " IF OBJECT_ID('P_CONDITIONNEMENT_SUPPR') IS NOT NULL \n" +
-                " DROP TABLE P_CONDITIONNEMENT_SUPPR \n";
+                """
+                         DELETE FROM P_CONDITIONNEMENT
+                         WHERE cbIndice IN(SELECT cbIndice FROM P_CONDITIONNEMENT_SUPPR)
+
+                         IF OBJECT_ID('P_CONDITIONNEMENT_SUPPR') IS NOT NULL
+                         DROP TABLE P_CONDITIONNEMENT_SUPPR
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

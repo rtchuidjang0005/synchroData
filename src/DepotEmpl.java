@@ -10,56 +10,54 @@ public class DepotEmpl extends Table {
 
     public static String insert(String filename)
     {
-        return          "BEGIN TRY " +
-                        " SET DATEFORMAT ymd;\n" +
+        return          """
+                BEGIN TRY  SET DATEFORMAT ymd;
+                 IF OBJECT_ID('F_DEPOTEMPL_DEST') IS NOT NULL AND {{UPDATE_ENABLED}} = 1
+                 UPDATE [dbo].[F_DEPOTEMPL]
+                   SET [DP_Code] = F_DEPOTEMPL_DEST.DP_Code
+                      ,[DP_Intitule] = F_DEPOTEMPL_DEST.DP_Intitule
+                      ,[DP_Zone] = F_DEPOTEMPL_DEST.DP_Zone
+                      ,[DP_Type] = F_DEPOTEMPL_DEST.DP_Type
+                      ,[cbProt] = F_DEPOTEMPL_DEST.cbProt
+                      ,[cbCreateur] = F_DEPOTEMPL_DEST.cbCreateur
+                      ,[cbModification] = F_DEPOTEMPL_DEST.cbModification
+                      ,[cbReplication] = F_DEPOTEMPL_DEST.cbReplication
+                      ,[cbFlag] = F_DEPOTEMPL_DEST.cbFlag
+                FROM F_DEPOTEMPL_DEST
+                  WHERE ISNULL(F_DEPOTEMPL.DP_NoSource,0) = ISNULL(F_DEPOTEMPL_DEST.DP_No,0)
+                  AND    ISNULL(F_DEPOTEMPL.DataBaseSource,'') = ISNULL(F_DEPOTEMPL_DEST.DataBaseSource,'')
 
-                        " IF OBJECT_ID('F_DEPOTEMPL_DEST') IS NOT NULL\n"+
-                        " UPDATE [dbo].[F_DEPOTEMPL]  \n" +
-                        "   SET [DP_Code] = F_DEPOTEMPL_DEST.DP_Code\n" +
-                        "      ,[DP_Intitule] = F_DEPOTEMPL_DEST.DP_Intitule\n" +
-                        "      ,[DP_Zone] = F_DEPOTEMPL_DEST.DP_Zone\n" +
-                        "      ,[DP_Type] = F_DEPOTEMPL_DEST.DP_Type\n" +
-                        "      ,[cbProt] = F_DEPOTEMPL_DEST.cbProt\n" +
-                        "      ,[cbCreateur] = F_DEPOTEMPL_DEST.cbCreateur\n" +
-                        "      ,[cbModification] = F_DEPOTEMPL_DEST.cbModification\n" +
-                        "      ,[cbReplication] = F_DEPOTEMPL_DEST.cbReplication\n" +
-                        "      ,[cbFlag] = F_DEPOTEMPL_DEST.cbFlag\n" +
-                        "FROM F_DEPOTEMPL_DEST       \n" +
-                        "  WHERE ISNULL(F_DEPOTEMPL.DP_NoSource,0) = ISNULL(F_DEPOTEMPL_DEST.DP_No,0) \n" +
-                        "  AND\tISNULL(F_DEPOTEMPL.DataBaseSource,'') = ISNULL(F_DEPOTEMPL_DEST.DataBaseSource,'') \n" +
-                        "  \n" +
-                        "  INSERT INTO [dbo].[F_DEPOTEMPL]     \n" +
-                        "  ([DP_No],[DE_No],[DP_Code],[DP_Intitule],[DP_Zone],[DP_Type],[cbProt]\n" +
-                        "      ,[cbCreateur],[cbModification],[cbReplication],[cbFlag],DP_NoSource,cbMarqSource,DataBaseSource)     \n" +
-                        "     \n" +
-                        "  SELECT ISNULL((SELECT Max(DP_No) FROM F_DEPOTEMPL),0)  + ROW_NUMBER() OVER(ORDER BY dest.DP_No),srcDep.[DE_No],[DP_Code],[DP_Intitule],[DP_Zone],[DP_Type],[cbProt]\n" +
-                        "      ,[cbCreateur],[cbModification],[cbReplication],[cbFlag],dest.DP_No,dest.cbMarqSource,dest.DataBaseSource \n" +
-                        "  FROM F_DEPOTEMPL_DEST dest       \n" +
-                        "  LEFT JOIN (SELECT DP_NoSource,DataBaseSource FROM F_DEPOTEMPL) src       \n" +
-                        "  ON ISNULL(dest.DP_No,0) = ISNULL(src.DP_NoSource,0)\n" +
-                        "  AND ISNULL(dest.DataBaseSource,'') = ISNULL(src.DataBaseSource,'')\n" +
-                        "  LEFT JOIN (SELECT DatabaseSource,DE_NoSource,DE_No FROM F_DEPOT) srcDep       \n" +
-                        "  ON\tISNULL(dest.DE_No,0) = ISNULL(srcDep.DE_NoSource,0)\n" +
-                        "  AND\tISNULL(dest.DataBaseSource,'') = ISNULL(srcDep.DataBaseSource,'')\n" +
-                        "  WHERE src.DP_NoSource IS NULL \n" +
-                        "  AND\tsrcDep.DE_No IS NOT NULL;   " +
-                        "  IF OBJECT_ID('F_DEPOTEMPL_DEST') IS NOT NULL     \n" +
-                        "  DROP TABLE F_DEPOTEMPL_DEST;" +
-                        " END TRY\n" +
-                        " BEGIN CATCH \n" +
-                        "INSERT INTO config.DB_Errors\n" +
-                        "    VALUES\n" +
-                        "  (SUSER_SNAME(),\n" +
-                        "   ERROR_NUMBER(),\n" +
-                        "   ERROR_STATE(),\n" +
-                        "   ERROR_SEVERITY(),\n" +
-                        "   ERROR_LINE(),\n" +
-                        "   ERROR_PROCEDURE(),\n" +
-                        "   ERROR_MESSAGE(),\n" +
-                        "   'Insert '+ ' "+filename+"',\n" +
-                        "   'F_DEPOTEMPL',\n" +
-                        "   GETDATE());\n" +
-                        "END CATCH";
+                  INSERT INTO [dbo].[F_DEPOTEMPL]
+                  ([DP_No],[DE_No],[DP_Code],[DP_Intitule],[DP_Zone],[DP_Type],[cbProt]
+                      ,[cbCreateur],[cbModification],[cbReplication],[cbFlag],DP_NoSource,cbMarqSource,DataBaseSource)
+
+                  SELECT ISNULL((SELECT Max(DP_No) FROM F_DEPOTEMPL),0)  + ROW_NUMBER() OVER(ORDER BY dest.DP_No),srcDep.[DE_No],[DP_Code],[DP_Intitule],[DP_Zone],[DP_Type],[cbProt]
+                      ,[cbCreateur],[cbModification],[cbReplication],[cbFlag],dest.DP_No,dest.cbMarqSource,dest.DataBaseSource
+                  FROM F_DEPOTEMPL_DEST dest
+                  LEFT JOIN (SELECT DP_NoSource,DataBaseSource FROM F_DEPOTEMPL) src
+                  ON ISNULL(dest.DP_No,0) = ISNULL(src.DP_NoSource,0)
+                  AND ISNULL(dest.DataBaseSource,'') = ISNULL(src.DataBaseSource,'')
+                  LEFT JOIN (SELECT DatabaseSource,DE_NoSource,DE_No FROM F_DEPOT) srcDep
+                  ON    ISNULL(dest.DE_No,0) = ISNULL(srcDep.DE_NoSource,0)
+                  AND    ISNULL(dest.DataBaseSource,'') = ISNULL(srcDep.DataBaseSource,'')
+                  WHERE src.DP_NoSource IS NULL
+                  AND    srcDep.DE_No IS NOT NULL;     IF OBJECT_ID('F_DEPOTEMPL_DEST') IS NOT NULL
+                  DROP TABLE F_DEPOTEMPL_DEST; END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_DEPOTEMPL',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
 
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
@@ -73,8 +71,8 @@ public class DepotEmpl extends Table {
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("", "'DP_No','DE_No','DP_NoSource'", tableName, tableName + "_DEST", filename,unibase));
-                sendData(sqlCon, path, filename, insert(filename));
+                updateTableDest(sqlCon, "", "'DP_No','DE_No','DP_NoSource'", tableName, tableName + "_DEST", filename,unibase);
+                sendData(sqlCon, path, filename, applyUpdateFlag(insert(filename), tableName));
 
                 deleteTempTable(sqlCon, tableName + "_DEST");
                 deleteDepot(sqlCon, path, filename);
@@ -91,15 +89,13 @@ public class DepotEmpl extends Table {
     public static void deleteDepot(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_DEPOTEMPL  \n" +
-                " WHERE EXISTS (SELECT 1 " +
-                "               FROM F_DEPOTEMPL_SUPPR emplSuppr" +
-                "               WHERE ISNULL(emplSuppr.DP_No,0) = ISNULL(F_DEPOTEMPL.DP_NoSource,0) " +
-                "               AND ISNULL(emplSuppr.DataBaseSource,'') = ISNULL(F_DEPOTEMPL.DataBaseSource,'')" +
-                "   )  \n" +
-                "  \n" +
-                " IF OBJECT_ID('F_DEPOTEMPL_SUPPR') IS NOT NULL  \n" +
-                " DROP TABLE F_DEPOTEMPL_SUPPR ;";
+                """
+                         DELETE FROM F_DEPOTEMPL
+                         WHERE EXISTS (SELECT 1                FROM F_DEPOTEMPL_SUPPR emplSuppr               WHERE ISNULL(emplSuppr.DP_No,0) = ISNULL(F_DEPOTEMPL.DP_NoSource,0)                AND ISNULL(emplSuppr.DataBaseSource,'') = ISNULL(F_DEPOTEMPL.DataBaseSource,'')   )
+
+                         IF OBJECT_ID('F_DEPOTEMPL_SUPPR') IS NOT NULL
+                         DROP TABLE F_DEPOTEMPL_SUPPR ;\
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

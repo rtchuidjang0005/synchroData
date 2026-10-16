@@ -10,41 +10,40 @@ public class Taxe extends Table {
     public static String insert(String filename)
     {
         return
-                " BEGIN TRY " +
-                " SET DATEFORMAT ymd;\n" +
-                " \n" +
+                """
+                         BEGIN TRY  SET DATEFORMAT ymd;
 
-                " IF OBJECT_ID('F_TAXE_DEST') IS NOT NULL\n"+
-                " INSERT INTO [dbo].[F_TAXE]\n" +
-                "           ([TA_Intitule],[TA_TTaux],[TA_Taux],[TA_Type],[CG_Num],[TA_No],[TA_Code],[TA_NP]\n" +
-                "           ,[TA_Sens],[TA_Provenance],[TA_Regroup],[TA_Assujet],[TA_GrilleBase],[TA_GrilleTaxe]\n" +
-                "           ,[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag])\n" +
-                "\n" +
-                "\t\t   SELECT [TA_Intitule],[TA_TTaux],[TA_Taux],[TA_Type],[CG_Num],[TA_No],dest.[TA_Code],[TA_NP]\n" +
-                "           ,[TA_Sens],[TA_Provenance],[TA_Regroup],[TA_Assujet],[TA_GrilleBase],[TA_GrilleTaxe]\n" +
-                "           ,[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag]\n" +
-                "\t\t   FROM F_TAXE_DEST dest\n" +
-                "\t\t   LEFT JOIN (SELECT TA_Code FROM F_TAXE) src\n" +
-                "\t\t   ON\tdest.TA_Code = src.TA_Code\n" +
-                "\t\t   WHERE src.TA_Code IS NULL;\n" +
-                "\n" +
-                "\t\t   IF OBJECT_ID('F_TAXE_DEST') IS NOT NULL\n" +
-                "\t\t   DROP TABLE F_TAXE_DEST;" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'F_TAXE',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+                         IF OBJECT_ID('F_TAXE_DEST') IS NOT NULL
+                         INSERT INTO [dbo].[F_TAXE]
+                                   ([TA_Intitule],[TA_TTaux],[TA_Taux],[TA_Type],[CG_Num],[TA_No],[TA_Code],[TA_NP]
+                                   ,[TA_Sens],[TA_Provenance],[TA_Regroup],[TA_Assujet],[TA_GrilleBase],[TA_GrilleTaxe]
+                                   ,[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag])
+
+                                   SELECT [TA_Intitule],[TA_TTaux],[TA_Taux],[TA_Type],[CG_Num],[TA_No],dest.[TA_Code],[TA_NP]
+                                   ,[TA_Sens],[TA_Provenance],[TA_Regroup],[TA_Assujet],[TA_GrilleBase],[TA_GrilleTaxe]
+                                   ,[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag]
+                                   FROM F_TAXE_DEST dest
+                                   LEFT JOIN (SELECT TA_Code FROM F_TAXE) src
+                                   ON    dest.TA_Code = src.TA_Code
+                                   WHERE src.TA_Code IS NULL;
+
+                                   IF OBJECT_ID('F_TAXE_DEST') IS NOT NULL
+                                   DROP TABLE F_TAXE_DEST; END TRY
+                         BEGIN CATCH
+                        INSERT INTO config.DB_Errors
+                            VALUES
+                          (SUSER_SNAME(),
+                           ERROR_NUMBER(),
+                           ERROR_STATE(),
+                           ERROR_SEVERITY(),
+                           ERROR_LINE(),
+                           ERROR_PROCEDURE(),
+                           ERROR_MESSAGE(),
+                           'Insert '+ ' %s',
+                           'F_TAXE',
+                           GETDATE());
+                        END CATCH\
+                        """.formatted(filename);
     }
 
     public static void sendDataElement(Connection sqlCon, String path,int unibase) {
@@ -58,7 +57,7 @@ public class Taxe extends Table {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
 
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("TA_Code", "'TA_Code'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "TA_Code", "'TA_Code'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteTempTable(sqlCon, tableName + "_DEST");
@@ -78,12 +77,14 @@ public class Taxe extends Table {
     public static void deleteArtCompta(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE src\n" +
-                " FROM F_TAXE src\n" +
-                " INNER JOIN F_TAXE_SUPPR del\n" +
-                " ON src.TA_Code = del.TA_Code;\n" +
-                " IF OBJECT_ID('F_TAXE_SUPPR') IS NOT NULL\n" +
-                " DROP TABLE F_TAXE_SUPPR ;";
+                """
+                         DELETE src
+                         FROM F_TAXE src
+                         INNER JOIN F_TAXE_SUPPR del
+                         ON src.TA_Code = del.TA_Code;
+                         IF OBJECT_ID('F_TAXE_SUPPR') IS NOT NULL
+                         DROP TABLE F_TAXE_SUPPR ;\
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

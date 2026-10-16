@@ -10,38 +10,39 @@ public class Condition extends Table{
 
     public static String insert(String filename)
     {
-        return  " BEGIN TRY " +
-                " SET DATEFORMAT ymd;\n" +
-                " IF OBJECT_ID('F_CONDITION_DEST') IS NOT NULL\n"+
-                "\tINSERT INTO F_CONDITION (\n" +
-                "\t[AR_Ref],[CO_No],[EC_Enumere],[EC_Quantite]\n" +
-                "\t\t\t,[CO_Ref],[CO_CodeBarre],[CO_Principal],[cbProt],[cbCreateur]\n" +
-                "\t\t\t,[cbModification],[cbReplication],[cbFlag])\n" +
-                "                                \n" +
-                "\tSELECT dest.[AR_Ref],dest.[CO_No],dest.[EC_Enumere],[EC_Quantite]\n" +
-                "\t\t\t,[CO_Ref],[CO_CodeBarre],[CO_Principal],[cbProt],[cbCreateur]\n" +
-                "\t\t\t,[cbModification],[cbReplication],[cbFlag]\n" +
-                "\tFROM F_CONDITION_DEST dest\n" +
-                "\tLEFT JOIN (SELECT AR_Ref,CO_No,EC_Enumere FROM F_CONDITION) src\n" +
-                "\t\tON dest.CO_No = src.CO_No\n" +
-                "\t\tAND dest.EC_Enumere = src.EC_Enumere\n" +
-                "\t\tAND dest.AR_Ref = src.AR_Ref\n" +
-                "\tWHERE src.CO_No IS NULL\n" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'F_CONDITION',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+        return  """
+                 BEGIN TRY  SET DATEFORMAT ymd;
+                 IF OBJECT_ID('F_CONDITION_DEST') IS NOT NULL
+                    INSERT INTO F_CONDITION (
+                    [AR_Ref],[CO_No],[EC_Enumere],[EC_Quantite]
+                            ,[CO_Ref],[CO_CodeBarre],[CO_Principal],[cbProt],[cbCreateur]
+                            ,[cbModification],[cbReplication],[cbFlag])
+
+                    SELECT dest.[AR_Ref],dest.[CO_No],dest.[EC_Enumere],[EC_Quantite]
+                            ,[CO_Ref],[CO_CodeBarre],[CO_Principal],[cbProt],[cbCreateur]
+                            ,[cbModification],[cbReplication],[cbFlag]
+                    FROM F_CONDITION_DEST dest
+                    LEFT JOIN (SELECT AR_Ref,CO_No,EC_Enumere FROM F_CONDITION) src
+                        ON dest.CO_No = src.CO_No
+                        AND dest.EC_Enumere = src.EC_Enumere
+                        AND dest.AR_Ref = src.AR_Ref
+                    WHERE src.CO_No IS NULL
+                 END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_CONDITION',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
     {
@@ -54,7 +55,7 @@ public class Condition extends Table{
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("CO_No,AR_Ref", "'CO_No','AR_Ref'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "CO_No,AR_Ref", "'CO_No','AR_Ref'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteCondition(sqlCon, path, filename);
@@ -72,11 +73,13 @@ public class Condition extends Table{
     public static void deleteCondition(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_CONDITION \n" +
-                " WHERE CO_No IN(SELECT CO_No FROM F_CONDITION_SUPPR) \n" +
-                " \n" +
-                " IF OBJECT_ID('F_CONDITION_SUPPR') IS NOT NULL \n" +
-                " DROP TABLE F_CONDITION_SUPPR \n";
+                """
+                         DELETE FROM F_CONDITION
+                         WHERE CO_No IN(SELECT CO_No FROM F_CONDITION_SUPPR)
+
+                         IF OBJECT_ID('F_CONDITION_SUPPR') IS NOT NULL
+                         DROP TABLE F_CONDITION_SUPPR
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

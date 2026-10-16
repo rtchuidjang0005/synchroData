@@ -10,41 +10,42 @@ public class Collaborateur extends Table {
 
     public static String insert(String filename)
     {
-        return  "BEGIN TRY " +
-                " SET DATEFORMAT ymd;\n" +
-                " IF OBJECT_ID('F_COLLABORATEUR_DEST') IS NOT NULL\n"+
-                "INSERT INTO F_COLLABORATEUR (\n" +
-                "[CO_No],[CO_Nom],[CO_Prenom],[CO_Fonction],[CO_Adresse],[CO_Complement],[CO_CodePostal],[CO_Ville],[CO_CodeRegion]\n" +
-                "      ,[CO_Pays],[CO_Service],[CO_Vendeur],[CO_Caissier],[CO_DateCreation],[CO_Acheteur],[CO_Telephone],[CO_Telecopie]\n" +
-                "      ,[CO_EMail],[CO_Receptionnaire],[PROT_No],[CO_TelPortable],[CO_ChargeRecouvr],[cbProt],[cbCreateur]\n" +
-                "      ,[cbModification],[cbReplication],[cbFlag])\n" +
-                "            \n" +
-                "SELECT dest.[CO_No],[CO_Nom],[CO_Prenom],[CO_Fonction],[CO_Adresse],[CO_Complement],[CO_CodePostal],[CO_Ville],[CO_CodeRegion]\n" +
-                "      ,[CO_Pays],[CO_Service],[CO_Vendeur],[CO_Caissier],[CO_DateCreation],[CO_Acheteur],[CO_Telephone],[CO_Telecopie]\n" +
-                "      ,[CO_EMail],[CO_Receptionnaire],[PROT_No],[CO_TelPortable],[CO_ChargeRecouvr],[cbProt],[cbCreateur]\n" +
-                "      ,[cbModification],[cbReplication],[cbFlag]\n" +
-                "FROM F_COLLABORATEUR_DEST dest\n" +
-                "LEFT JOIN (SELECT CO_No FROM F_COLLABORATEUR) src\n" +
-                "\tON\tdest.CO_No = src.CO_No\n" +
-                "WHERE src.CO_No IS NULL\n" +
-                "            \n" +
-                "IF OBJECT_ID('F_COLLABORATEUR_DEST') IS NOT NULL \n" +
-                "DROP TABLE F_COLLABORATEUR_DEST;\n" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'F_COLLABORATEUR',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+        return  """
+                BEGIN TRY  SET DATEFORMAT ymd;
+                 IF OBJECT_ID('F_COLLABORATEUR_DEST') IS NOT NULL
+                INSERT INTO F_COLLABORATEUR (
+                [CO_No],[CO_Nom],[CO_Prenom],[CO_Fonction],[CO_Adresse],[CO_Complement],[CO_CodePostal],[CO_Ville],[CO_CodeRegion]
+                      ,[CO_Pays],[CO_Service],[CO_Vendeur],[CO_Caissier],[CO_DateCreation],[CO_Acheteur],[CO_Telephone],[CO_Telecopie]
+                      ,[CO_EMail],[CO_Receptionnaire],[PROT_No],[CO_TelPortable],[CO_ChargeRecouvr],[cbProt],[cbCreateur]
+                      ,[cbModification],[cbReplication],[cbFlag])
+
+                SELECT dest.[CO_No],[CO_Nom],[CO_Prenom],[CO_Fonction],[CO_Adresse],[CO_Complement],[CO_CodePostal],[CO_Ville],[CO_CodeRegion]
+                      ,[CO_Pays],[CO_Service],[CO_Vendeur],[CO_Caissier],[CO_DateCreation],[CO_Acheteur],[CO_Telephone],[CO_Telecopie]
+                      ,[CO_EMail],[CO_Receptionnaire],[PROT_No],[CO_TelPortable],[CO_ChargeRecouvr],[cbProt],[cbCreateur]
+                      ,[cbModification],[cbReplication],[cbFlag]
+                FROM F_COLLABORATEUR_DEST dest
+                LEFT JOIN (SELECT CO_No FROM F_COLLABORATEUR) src
+                    ON    dest.CO_No = src.CO_No
+                WHERE src.CO_No IS NULL
+
+                IF OBJECT_ID('F_COLLABORATEUR_DEST') IS NOT NULL
+                DROP TABLE F_COLLABORATEUR_DEST;
+                 END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_COLLABORATEUR',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
 
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
@@ -58,7 +59,7 @@ public class Collaborateur extends Table {
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("CO_No", "'CO_No','CO_Nom'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "CO_No", "'CO_No','CO_Nom'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteTempTable(sqlCon, tableName + "_DEST");
@@ -78,11 +79,13 @@ public class Collaborateur extends Table {
     public static void deleteCollaborateur(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_COLLABORATEUR \n" +
-                " WHERE CO_No IN(SELECT CO_No FROM F_COLLABORATEUR_SUPPR) \n" +
-                " \n" +
-                " IF OBJECT_ID('F_COLLABORATEUR_SUPPR') IS NOT NULL \n" +
-                " DROP TABLE F_COLLABORATEUR_SUPPR \n";
+                """
+                         DELETE FROM F_COLLABORATEUR
+                         WHERE CO_No IN(SELECT CO_No FROM F_COLLABORATEUR_SUPPR)
+
+                         IF OBJECT_ID('F_COLLABORATEUR_SUPPR') IS NOT NULL
+                         DROP TABLE F_COLLABORATEUR_SUPPR
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

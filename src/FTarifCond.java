@@ -10,33 +10,34 @@ public class FTarifCond extends Table{
 
     public static String insert(String filename)
     {
-        return  " BEGIN TRY " +
-                " SET DATEFORMAT ymd;\n" +
-                " IF OBJECT_ID('F_TARIFCOND_DEST') IS NOT NULL\n"+
-                "\tINSERT INTO F_TARIFCOND (\n" +
-                "\t[AR_Ref],[TC_RefCF],[CO_No],[TC_Prix],[TC_PrixNouv],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag])\n" +
-                "                                \n" +
-                "\tSELECT dest.[AR_Ref],dest.[TC_RefCF],dest.[CO_No],dest.[TC_Prix],dest.[TC_PrixNouv],dest.[cbProt],dest.[cbCreateur],dest.[cbModification],dest.[cbReplication],dest.[cbFlag]\n" +
-                "\tFROM F_TARIFCOND_DEST dest\n" +
-                "\tLEFT JOIN (SELECT AR_Ref,CO_No FROM F_TARIFCOND) src\n" +
-                "\t\tON dest.AR_Ref = src.AR_Ref\n" +
-                "\t\tAND dest.CO_No = src.CO_No\n" +
-                "\tWHERE src.AR_Ref IS NULL\n" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'F_TARIFCOND',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+        return  """
+                 BEGIN TRY  SET DATEFORMAT ymd;
+                 IF OBJECT_ID('F_TARIFCOND_DEST') IS NOT NULL
+                    INSERT INTO F_TARIFCOND (
+                    [AR_Ref],[TC_RefCF],[CO_No],[TC_Prix],[TC_PrixNouv],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag])
+
+                    SELECT dest.[AR_Ref],dest.[TC_RefCF],dest.[CO_No],dest.[TC_Prix],dest.[TC_PrixNouv],dest.[cbProt],dest.[cbCreateur],dest.[cbModification],dest.[cbReplication],dest.[cbFlag]
+                    FROM F_TARIFCOND_DEST dest
+                    LEFT JOIN (SELECT AR_Ref,CO_No FROM F_TARIFCOND) src
+                        ON dest.AR_Ref = src.AR_Ref
+                        AND dest.CO_No = src.CO_No
+                    WHERE src.AR_Ref IS NULL
+                 END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_TARIFCOND',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
     {
@@ -49,7 +50,7 @@ public class FTarifCond extends Table{
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("AR_Ref,CO_No", "'AR_Ref','CO_No','TC_RefCF'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "AR_Ref,CO_No", "'AR_Ref','CO_No','TC_RefCF'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteCondition(sqlCon, path, filename);
@@ -68,13 +69,15 @@ public class FTarifCond extends Table{
     {
         String query =
 
-                " DELETE src\n" +
-                        " FROM F_TARIFCOND src\n" +
-                        " INNER JOIN F_TARIFCOND_SUPPR del\n" +
-                        " ON src.AR_Ref = del.AR_Ref \n" +
-                        " AND src.CO_No = del.CO_No ;\n" +
-                        " IF OBJECT_ID('F_TARIFCOND_SUPPR') IS NOT NULL\n" +
-                        " DROP TABLE F_TARIFCOND_SUPPR ;";
+                """
+                         DELETE src
+                         FROM F_TARIFCOND src
+                         INNER JOIN F_TARIFCOND_SUPPR del
+                         ON src.AR_Ref = del.AR_Ref
+                         AND src.CO_No = del.CO_No ;
+                         IF OBJECT_ID('F_TARIFCOND_SUPPR') IS NOT NULL
+                         DROP TABLE F_TARIFCOND_SUPPR ;\
+                        """;
 
         if ((new File(path + "\\deleteList" + filename)).exists())
         {

@@ -9,44 +9,45 @@ public class ArticleRessource extends Table {
     public static String configList = "ListArticleRessource";
     public static String list()
     {
-        return "SELECT\t[AR_Ref],[RP_Code],[cbProt],[cbMarq]\n" +
-                "\t\t,[cbCreateur],[cbModification],[cbReplication],[cbFlag]\n" +
-                " ,cbMarqSource = cbMarq " +
-                " FROM\t[F_ARTICLERESSOURCE] " +
-                "WHERE cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='F_ARTICLERESSOURCE'),'1900-01-01')";
+        return """
+                SELECT    [AR_Ref],[RP_Code],[cbProt],[cbMarq]
+                        ,[cbCreateur],[cbModification],[cbReplication],[cbFlag]
+                 ,cbMarqSource = cbMarq  FROM    [F_ARTICLERESSOURCE] WHERE cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='F_ARTICLERESSOURCE'),'1900-01-01')\
+                """;
     }
 
     public static String insert(String filename)
     {
-        return "BEGIN TRY" +
-                " SET DATEFORMAT ymd;\n" +
-                " IF OBJECT_ID('F_ARTICLERESSOURCE_DEST') IS NOT NULL\n"+
-                "\tINSERT INTO F_ARTICLERESSOURCE (\n" +
-                "\t[AR_Ref],[RP_Code],[cbProt]\n" +
-                "\t\t\t,[cbCreateur],[cbModification],[cbReplication],[cbFlag])\n" +
-                "                                \n" +
-                "\tSELECT dest.[AR_Ref],dest.[RP_Code],[cbProt]\n" +
-                "\t\t\t,[cbCreateur],[cbModification],[cbReplication],[cbFlag]\n" +
-                "\tFROM F_ARTICLERESSOURCE_DEST dest\n" +
-                "\tLEFT JOIN (SELECT AR_Ref,RP_Code FROM F_ARTICLERESSOURCE) src\n" +
-                "\t\tON dest.AR_Ref = src.AR_Ref\n" +
-                "\t\tAND dest.RP_Code = src.RP_Code\n" +
-                "\tWHERE src.AR_Ref IS NULL;\n" +
-                " END TRY\n" +
-                " BEGIN CATCH \n" +
-                "INSERT INTO config.DB_Errors\n" +
-                "    VALUES\n" +
-                "  (SUSER_SNAME(),\n" +
-                "   ERROR_NUMBER(),\n" +
-                "   ERROR_STATE(),\n" +
-                "   ERROR_SEVERITY(),\n" +
-                "   ERROR_LINE(),\n" +
-                "   ERROR_PROCEDURE(),\n" +
-                "   ERROR_MESSAGE(),\n" +
-                "   'Insert '+ ' "+filename+"',\n" +
-                "   'F_ARTICLERESSOURCE',\n" +
-                "   GETDATE());\n" +
-                "END CATCH";
+        return """
+                BEGIN TRY SET DATEFORMAT ymd;
+                 IF OBJECT_ID('F_ARTICLERESSOURCE_DEST') IS NOT NULL
+                    INSERT INTO F_ARTICLERESSOURCE (
+                    [AR_Ref],[RP_Code],[cbProt]
+                            ,[cbCreateur],[cbModification],[cbReplication],[cbFlag])
+
+                    SELECT dest.[AR_Ref],dest.[RP_Code],[cbProt]
+                            ,[cbCreateur],[cbModification],[cbReplication],[cbFlag]
+                    FROM F_ARTICLERESSOURCE_DEST dest
+                    LEFT JOIN (SELECT AR_Ref,RP_Code FROM F_ARTICLERESSOURCE) src
+                        ON dest.AR_Ref = src.AR_Ref
+                        AND dest.RP_Code = src.RP_Code
+                    WHERE src.AR_Ref IS NULL;
+                 END TRY
+                 BEGIN CATCH
+                INSERT INTO config.DB_Errors
+                    VALUES
+                  (SUSER_SNAME(),
+                   ERROR_NUMBER(),
+                   ERROR_STATE(),
+                   ERROR_SEVERITY(),
+                   ERROR_LINE(),
+                   ERROR_PROCEDURE(),
+                   ERROR_MESSAGE(),
+                   'Insert '+ ' %s',
+                   'F_ARTICLERESSOURCE',
+                   GETDATE());
+                END CATCH\
+                """.formatted(filename);
     }
 
     public static void sendDataElement(Connection sqlCon, String path,int unibase)
@@ -60,7 +61,7 @@ public class ArticleRessource extends Table {
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
                 readOnFile(path, "deleteList" + filename, tableName + "_SUPPR", sqlCon);
-                executeQuery(sqlCon, updateTableDest("RP_Code,AR_Ref", "'RP_Code'", tableName, tableName + "_DEST", filename,unibase));
+                updateTableDest(sqlCon, "RP_Code,AR_Ref", "'RP_Code'", tableName, tableName + "_DEST", filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
 
                 deleteArticleRessource(sqlCon, path, filename);
@@ -79,11 +80,13 @@ public class ArticleRessource extends Table {
     public static void deleteArticleRessource(Connection sqlCon, String path,String filename)
     {
         String query =
-                " DELETE FROM F_ARTICLERESSOURCE \n" +
-                " WHERE EXISTS (SELECT 1 FROM F_ARTICLERESSOURCE_SUPPR WHERE F_ARTICLERESSOURCE_SUPPR.AR_Ref = F_ARTICLERESSOURCE.AR_Ref AND F_ARTICLERESSOURCE_SUPPR.RP_Code = F_ARTICLERESSOURCE.RP_Code) \n" +
-                " \n" +
-                " IF OBJECT_ID('F_ARTICLERESSOURCE_SUPPR') IS NOT NULL \n" +
-                " DROP TABLE F_ARTICLERESSOURCE_SUPPR \n";
+                """
+                         DELETE FROM F_ARTICLERESSOURCE
+                         WHERE EXISTS (SELECT 1 FROM F_ARTICLERESSOURCE_SUPPR WHERE F_ARTICLERESSOURCE_SUPPR.AR_Ref = F_ARTICLERESSOURCE.AR_Ref AND F_ARTICLERESSOURCE_SUPPR.RP_Code = F_ARTICLERESSOURCE.RP_Code)
+
+                         IF OBJECT_ID('F_ARTICLERESSOURCE_SUPPR') IS NOT NULL
+                         DROP TABLE F_ARTICLERESSOURCE_SUPPR
+                        """;
         if ((new File(path + "\\deleteList" + filename)).exists())
         {
             executeQuery(sqlCon, query);

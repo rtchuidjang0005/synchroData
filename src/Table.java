@@ -24,6 +24,31 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 public class Table {
 
+    // Paramètre "updateExisting" du fichier de config : {"F_ARTICLE":"0", ...}
+    // Une table absente (ou valeur différente de "0") => les valeurs existantes sont mises à jour.
+    private static JSONObject updateExistingConfig = new JSONObject();
+
+    public static void setUpdateExistingConfig(Object config) {
+        updateExistingConfig = (config instanceof JSONObject) ? (JSONObject) config : new JSONObject();
+    }
+
+    public static boolean isUpdateEnabled(String tableName) {
+        Object value = updateExistingConfig.get(tableName);
+        return value == null || !"0".equals(value.toString());
+    }
+
+    public static String applyUpdateFlag(String query, String tableName) {
+        return query.replace("{{UPDATE_ENABLED}}", isUpdateEnabled(tableName) ? "1" : "0");
+    }
+
+    public static void updateTableDest(Connection sqlCon, String key, String exclude, String tableName, String tableNameDest, String filename, int unibase) {
+        if (!isUpdateEnabled(tableName)) {
+            System.out.println("Mise à jour des valeurs existantes désactivée pour " + tableName);
+            return;
+        }
+        updateTableDest(sqlCon, key, exclude, tableName, tableNameDest, filename, unibase);
+    }
+
     private static final String DATE_FORMAT = "yyyy-MM-dd HH:mm:ss.s";
     private static Statement stmt;
 
@@ -31,57 +56,54 @@ public class Table {
         return "BEGIN \n" +
                 "\nDECLARE @TableName AS VARCHAR(100) = '"+table+"'; \n" +
                 "\nDECLARE @cbModification VARCHAR(100) = "+ ((!existsCbModification) ? "NULL" : "ISNULL((SELECT CONVERT(NVARCHAR(100),(SELECT MAX(cbModification) FROM " + table + "),25)),'1901-01-01');\n") +
-                "\nDECLARE @lastSynchro VARCHAR(100) = ISNULL((SELECT CONVERT(NVARCHAR(100),(SELECT CASE WHEN ISNULL(isLoaded,0) = 2 THEN lastSynchro ELSE DATEADD(HOUR,-1,lastSynchro) END FROM config.SelectTable WHERE tableName = @TableName),25)),'1901-01-01');" +
+                """
 
-                "IF EXISTS(SELECT 1 FROM config.SelectTable WHERE tableName = @TableName) \n" +
-                " UPDATE config.SelectTable " +
-                "     SET lastSynchro =  CONVERT(DATETIME,@cbModification,20) \n" +
-                "     , isLoaded =  CASE WHEN CONVERT(DATETIME,@cbModification,20) = lastSynchro THEN " +
-                "                               CASE WHEN ISNULL(isLoaded,0) < 2 THEN  ISNULL(isLoaded,0) + 1 ELSE  ISNULL(isLoaded,0) END" +
-                "                       ELSE 0 END\n" +
-                " WHERE tableName = @TableName; \n" +
-                "         ELSE \n" +
-                "             INSERT INTO config.SelectTable(tableName,lastSynchro,isLoaded) VALUES(@TableName,CONVERT(DATETIME,@cbModification,20),0); \n"+
-                "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                "DECLARE @MonSQL AS VARCHAR(MAX)=''; \n" +
-                "DECLARE @databaseSource AS VARCHAR(150) = '"+dataSource+"'; \n" +
-                "DECLARE @getid CURSOR\n" +
-                "\n" +
-                "SET @getid = CURSOR FOR\n" +
-                "SELECT col.name\n" +
-                "FROM sys.tables tab\n" +
-                "INNER JOIN sys.columns col\n" +
-                "\tON tab.object_id = col.object_id\n" +
-                "WHERE tab.name = @TableName\n" +
-                "AND (col.name NOT LIKE 'cb%' OR col.Name = 'cbIndice')" +
-                "AND col.name NOT IN ('DataBaseSource','cbMarqSource')\n" +
-                "\n" +
-                "OPEN @getid\n" +
-                "FETCH NEXT\n" +
-                "FROM @getid INTO @MaColonne\n" +
-                "WHILE @@FETCH_STATUS = 0\n" +
-                "BEGIN\n" +
-                " SELECT @MonSQL = @MonSQL+ ',' + @MaColonne \n" +
-                "\n" +
-                " FETCH NEXT\n" +
-                "    FROM @getid INTO @MaColonne --, @name\n" +
-                "END\n" +
-                "CLOSE @getid\n" +
-                "DEALLOCATE @getid\n" +
-                "SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL)) \n" +
-                "\n" +
-                "SELECT @MonSQL = 'DECLARE @databaseSource AS VARCHAR (150) = '''+@databaseSource+'''; SELECT ' + @MonSQL \n" +
-                "+ CASE WHEN @cbModification IS NOT NULL THEN ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag]' ELSE '' END +',cbMarqSource = [cbMarq],[DataBaseSource] = @databaseSource  FROM '\n" +
-                "+ @TableName +  CASE WHEN @cbModification IS NOT NULL THEN ' WHERE cbModification > CONVERT(DATETIME,''' + @lastSynchro +''',20)' ELSE '' END\n" +
-                "IF EXISTS (\tSELECT\tcol.name  \n" +
-                "\t\t\tFROM\tsys.tables tab  \n" +
-                "\t\t\tINNER JOIN sys.columns col\tON\ttab.object_id = col.object_id  \n" +
-                "\t\t\tWHERE\ttab.name = @TableName  \n" +
-                "\t\t\tAND\t\tcol.name = 'DataBaseSource') \n" +
-                "\t SELECT @MonSQL = @MonSQL + ' AND ISNULL(DataBaseSource,''' + @databaseSource +''') = ''' + @databaseSource +''''\n" +
-                "EXEC(@MonSQL)\n" +
-                "\n" +
-                "END";
+                        DECLARE @lastSynchro VARCHAR(100) = ISNULL((SELECT CONVERT(NVARCHAR(100),(SELECT CASE WHEN ISNULL(isLoaded,0) = 2 THEN lastSynchro ELSE DATEADD(HOUR,-1,lastSynchro) END FROM config.SelectTable WHERE tableName = @TableName),25)),'1901-01-01');IF EXISTS(SELECT 1 FROM config.SelectTable WHERE tableName = @TableName)
+                         UPDATE config.SelectTable      SET lastSynchro =  CONVERT(DATETIME,@cbModification,20)
+                             , isLoaded =  CASE WHEN CONVERT(DATETIME,@cbModification,20) = lastSynchro THEN                                CASE WHEN ISNULL(isLoaded,0) < 2 THEN  ISNULL(isLoaded,0) + 1 ELSE  ISNULL(isLoaded,0) END                       ELSE 0 END
+                         WHERE tableName = @TableName;
+                                 ELSE
+                                     INSERT INTO config.SelectTable(tableName,lastSynchro,isLoaded) VALUES(@TableName,CONVERT(DATETIME,@cbModification,20),0);
+                        DECLARE @MaColonne AS VARCHAR(250);
+                        DECLARE @MonSQL AS VARCHAR(MAX)='';
+                        DECLARE @databaseSource AS VARCHAR(150) = '%s';
+                        DECLARE @getid CURSOR
+
+                        SET @getid = CURSOR FOR
+                        SELECT col.name
+                        FROM sys.tables tab
+                        INNER JOIN sys.columns col
+                            ON tab.object_id = col.object_id
+                        WHERE tab.name = @TableName
+                        AND (col.name NOT LIKE 'cb%%' OR col.Name = 'cbIndice')AND col.name NOT IN ('DataBaseSource','cbMarqSource')
+
+                        OPEN @getid
+                        FETCH NEXT
+                        FROM @getid INTO @MaColonne
+                        WHILE @@FETCH_STATUS = 0
+                        BEGIN
+                         SELECT @MonSQL = @MonSQL+ ',' + @MaColonne
+
+                         FETCH NEXT
+                            FROM @getid INTO @MaColonne --, @name
+                        END
+                        CLOSE @getid
+                        DEALLOCATE @getid
+                        SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL))
+
+                        SELECT @MonSQL = 'DECLARE @databaseSource AS VARCHAR (150) = '''+@databaseSource+'''; SELECT ' + @MonSQL
+                        + CASE WHEN @cbModification IS NOT NULL THEN ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag]' ELSE '' END +',cbMarqSource = [cbMarq],[DataBaseSource] = @databaseSource  FROM '
+                        + @TableName +  CASE WHEN @cbModification IS NOT NULL THEN ' WHERE cbModification > CONVERT(DATETIME,''' + @lastSynchro +''',20)' ELSE '' END
+                        IF EXISTS (    SELECT    col.name
+                                    FROM    sys.tables tab
+                                    INNER JOIN sys.columns col    ON    tab.object_id = col.object_id
+                                    WHERE    tab.name = @TableName
+                                    AND        col.name = 'DataBaseSource')
+                             SELECT @MonSQL = @MonSQL + ' AND ISNULL(DataBaseSource,''' + @databaseSource +''') = ''' + @databaseSource +''''
+                        EXEC(@MonSQL)
+
+                        END\
+                        """.formatted(dataSource);
     }
 
     public static String selectSourceTable(String table, String dataSource, JSONObject type){
@@ -111,236 +133,215 @@ public class Table {
                 "DECLARE @sortie AS VARCHAR(1) = "+type.get("sortie")+"; \n" +
                 "DECLARE @transfert AS VARCHAR(1) = "+type.get("transfert")+"; \n" +
                 "DECLARE @interne1 AS VARCHAR(1) = "+type.get("documentinterne1")+"; \n" +
-                "DECLARE @interne2 AS VARCHAR(1) = "+type.get("documentinterne2")+"; \n" +
-                "DECLARE @getid CURSOR\n" +
-                "\n" +
-                "SET @getid = CURSOR FOR\n" +
-                "SELECT col.name\n" +
-                "FROM sys.tables tab\n" +
-                "INNER JOIN sys.columns col\n" +
-                "\tON tab.object_id = col.object_id\n" +
-                "WHERE tab.name = @TableName\n" +
-                "AND col.name NOT LIKE 'cb%'" +
-                "AND col.name NOT IN ('DataBaseSource','cbMarqSource')\n" +
-                "\n" +
-                "OPEN @getid\n" +
-                "FETCH NEXT\n" +
-                "FROM @getid INTO @MaColonne\n" +
-                "WHILE @@FETCH_STATUS = 0\n" +
-                "BEGIN\n" +
-                " SELECT @MonSQL = @MonSQL+ ',' + @MaColonne \n" +
-                "\n" +
-                " FETCH NEXT\n" +
-                "    FROM @getid INTO @MaColonne --, @name\n" +
-                "END\n" +
-                "CLOSE @getid\n" +
-                "DEALLOCATE @getid\n" +
-                "SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL)) \n" +
-                "\n" +
-                "SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''"+dataSource+"''  FROM '+ @TableName +'" +
-                "  WHERE cbModification > CONVERT(DATETIME,''' + @lastSynchro +''',20) \n" +
-                "  AND CASE WHEN ' + @vente + ' = 1 AND DO_Domaine = 0 THEN 1 \n" +
-                "           WHEN ' + @facturevente + ' = 1 AND DO_Domaine = 0 AND DO_Type IN (6,7) THEN 1 \n" +
-                "           WHEN ' + @devis + ' = 1 AND DO_Domaine = 0 AND DO_Type = 0 THEN 1 \n" +
-                "           WHEN ' + @bonlivraison + ' = 1 AND DO_Domaine = 0 AND DO_Type = 3 THEN 1 \n" +
-                "           WHEN ' + @factureachat + ' = 1 AND DO_Domaine = 1 THEN 1 \n" +
-                "           WHEN ' + @stock + ' = 1 AND DO_Domaine = 2 THEN 1 \n" +
-                "           WHEN ' + @entree + ' = 1 AND DO_Domaine = 2 AND DO_Type = 20 THEN 1 \n" +
-                "           WHEN ' + @sortie + ' = 1 AND DO_Domaine = 2 AND DO_Type = 21 THEN 1 \n" +
-                "           WHEN ' + @transfert + ' = 1 AND DO_Domaine = 2 AND DO_Type = 23 THEN 1 \n" +
-                "           WHEN ' + @interne1 + ' = 1 AND DO_Domaine = 4 AND DO_Type = 40 THEN 1 \n" +
-                "           WHEN ' + @interne2 + ' = 1 AND DO_Domaine = 4 AND DO_Type = 41 THEN 1 END = 1 '\n" +
-                "\n" +
-                "IF EXISTS (\tSELECT\tcol.name  \n" +
-                "\t\t\tFROM\tsys.tables tab  \n" +
-                "\t\t\tINNER JOIN sys.columns col\tON\ttab.object_id = col.object_id  \n" +
-                "\t\t\tWHERE\ttab.name = @TableName  \n" +
-                "\t\t\tAND\t\tcol.name = 'DataBaseSource') \n" +
-                "\t SELECT @MonSQL = @MonSQL + ' AND ISNULL(DataBaseSource,''"+dataSource+"'') = ''"+dataSource+"''' \n" +
-                "EXEC(@MonSQL)\n" +
-                "\n" +
-                "END";
+                "DECLARE @interne2 AS VARCHAR(1) = "+type.get("documentinterne2")+"""
+                        ;
+                        DECLARE @getid CURSOR
+
+                        SET @getid = CURSOR FOR
+                        SELECT col.name
+                        FROM sys.tables tab
+                        INNER JOIN sys.columns col
+                            ON tab.object_id = col.object_id
+                        WHERE tab.name = @TableName
+                        AND col.name NOT LIKE 'cb%%'AND col.name NOT IN ('DataBaseSource','cbMarqSource')
+
+                        OPEN @getid
+                        FETCH NEXT
+                        FROM @getid INTO @MaColonne
+                        WHILE @@FETCH_STATUS = 0
+                        BEGIN
+                         SELECT @MonSQL = @MonSQL+ ',' + @MaColonne
+
+                         FETCH NEXT
+                            FROM @getid INTO @MaColonne --, @name
+                        END
+                        CLOSE @getid
+                        DEALLOCATE @getid
+                        SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL))
+
+                        SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''%s''  FROM '+ @TableName +'  WHERE cbModification > CONVERT(DATETIME,''' + @lastSynchro +''',20)
+                          AND CASE WHEN ' + @vente + ' = 1 AND DO_Domaine = 0 THEN 1
+                                   WHEN ' + @facturevente + ' = 1 AND DO_Domaine = 0 AND DO_Type IN (6,7) THEN 1
+                                   WHEN ' + @devis + ' = 1 AND DO_Domaine = 0 AND DO_Type = 0 THEN 1
+                                   WHEN ' + @bonlivraison + ' = 1 AND DO_Domaine = 0 AND DO_Type = 3 THEN 1
+                                   WHEN ' + @factureachat + ' = 1 AND DO_Domaine = 1 THEN 1
+                                   WHEN ' + @stock + ' = 1 AND DO_Domaine = 2 THEN 1
+                                   WHEN ' + @entree + ' = 1 AND DO_Domaine = 2 AND DO_Type = 20 THEN 1
+                                   WHEN ' + @sortie + ' = 1 AND DO_Domaine = 2 AND DO_Type = 21 THEN 1
+                                   WHEN ' + @transfert + ' = 1 AND DO_Domaine = 2 AND DO_Type = 23 THEN 1
+                                   WHEN ' + @interne1 + ' = 1 AND DO_Domaine = 4 AND DO_Type = 40 THEN 1
+                                   WHEN ' + @interne2 + ' = 1 AND DO_Domaine = 4 AND DO_Type = 41 THEN 1 END = 1 '
+
+                        IF EXISTS (    SELECT    col.name
+                                    FROM    sys.tables tab
+                                    INNER JOIN sys.columns col    ON    tab.object_id = col.object_id
+                                    WHERE    tab.name = @TableName
+                                    AND        col.name = 'DataBaseSource')
+                             SELECT @MonSQL = @MonSQL + ' AND ISNULL(DataBaseSource,''%s'') = ''%s'''
+                        EXEC(@MonSQL)
+
+                        END\
+                        """.formatted(dataSource, dataSource, dataSource);
     }
 
     public static String selectSourceTableFilterAgency(String table,String dataSource,String agency,String agencyColumn){
-        return "BEGIN \n" +
-                "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                "DECLARE @MonSQL AS VARCHAR(MAX)=''; \n" +
-                "DECLARE @TableName AS VARCHAR(100) = '"+table+"'; \n" +
-                "DECLARE @getid CURSOR\n" +
-                "\n" +
-                "SET @getid = CURSOR FOR\n" +
-                "SELECT col.name\n" +
-                "FROM sys.tables tab\n" +
-                "INNER JOIN sys.columns col\n" +
-                "\tON tab.object_id = col.object_id\n" +
-                "WHERE tab.name = @TableName\n" +
-                "AND col.name NOT LIKE 'cb%'" +
-                "AND col.name NOT IN ('DataBaseSource','cbMarqSource')\n" +
-                "\n" +
-                "OPEN @getid\n" +
-                "FETCH NEXT\n" +
-                "FROM @getid INTO @MaColonne\n" +
-                "WHILE @@FETCH_STATUS = 0\n" +
-                "BEGIN\n" +
-                " SELECT @MonSQL = @MonSQL+ ',' + @MaColonne \n" +
-                "\n" +
-                " FETCH NEXT\n" +
-                "    FROM @getid INTO @MaColonne --, @name\n" +
-                "END\n" +
-                "CLOSE @getid\n" +
-                "DEALLOCATE @getid\n" +
-                "SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL)) \n" +
-                "\n" +
-                "SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''"+dataSource+"''  FROM '+ @TableName " +
-                "+ ' WHERE  cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='''+ @TableName +'''),''1900-01-01'')' " +
-                "+ ' AND    "+agencyColumn+" IN (SELECT DE_No FROM F_DEPOT WHERE DE_CodePostal = ''"+agency+"'')'   \n" +
-                "\n" +
-                "EXEC(@MonSQL)\n" +
-                "\n" +
-                "END";
+        return """
+                BEGIN
+                DECLARE @MaColonne AS VARCHAR(250);
+                DECLARE @MonSQL AS VARCHAR(MAX)='';
+                DECLARE @TableName AS VARCHAR(100) = '%s';
+                DECLARE @getid CURSOR
+
+                SET @getid = CURSOR FOR
+                SELECT col.name
+                FROM sys.tables tab
+                INNER JOIN sys.columns col
+                    ON tab.object_id = col.object_id
+                WHERE tab.name = @TableName
+                AND col.name NOT LIKE 'cb%%'AND col.name NOT IN ('DataBaseSource','cbMarqSource')
+
+                OPEN @getid
+                FETCH NEXT
+                FROM @getid INTO @MaColonne
+                WHILE @@FETCH_STATUS = 0
+                BEGIN
+                 SELECT @MonSQL = @MonSQL+ ',' + @MaColonne
+
+                 FETCH NEXT
+                    FROM @getid INTO @MaColonne --, @name
+                END
+                CLOSE @getid
+                DEALLOCATE @getid
+                SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL))
+
+                SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''%s''  FROM '+ @TableName + ' WHERE  cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='''+ @TableName +'''),''1900-01-01'')' + ' AND    %s IN (SELECT DE_No FROM F_DEPOT WHERE DE_CodePostal = ''%s'')'
+
+                EXEC(@MonSQL)
+
+                END\
+                """.formatted(table, dataSource, agencyColumn, agency);
     }
 
     public static String selectSourceTableFilterAgencyArticle(String table,String dataSource,String agency){
-        return "BEGIN \n" +
-                "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                "DECLARE @MonSQL AS VARCHAR(MAX)=''; \n" +
-                "DECLARE @TableName AS VARCHAR(100) = '"+table+"'; \n" +
-                "DECLARE @getid CURSOR\n" +
-                "\n" +
-                "SET @getid = CURSOR FOR\n" +
-                "SELECT col.name\n" +
-                "FROM sys.tables tab\n" +
-                "INNER JOIN sys.columns col\n" +
-                "\tON tab.object_id = col.object_id\n" +
-                "WHERE tab.name = @TableName\n" +
-                "AND CASE WHEN col.name LIKE 'cb%' THEN 0 " +
-                " WHEN (col.name LIKE '%_P_MIN' AND LEFT(col.name ,LEN('"+agency+"')) <> '"+agency+"') THEN 0 \n " +
-                " WHEN (col.name LIKE '%_QTE_MIN_DG' AND LEFT(col.name ,LEN('"+agency+"')) <>  '"+agency+"') THEN 0 \n " +
-                " WHEN (col.name LIKE '%_P_MAX' AND LEFT(col.name ,LEN('"+agency+"')) <>  '"+agency+"') THEN 0 \n " +
-                " WHEN (col.name LIKE '%_P_GROSSISTES' AND LEFT(col.name ,LEN('"+agency+"')) <>  '"+agency+"') THEN 0 \n " +
-                " WHEN (col.name LIKE '%_QTE_MIN_G' AND LEFT(col.name ,LEN('"+agency+"')) <>  '"+agency+"') THEN 0 \n " +
-                " WHEN (col.name LIKE '%_SUPER_PRIX' AND LEFT(col.name ,LEN('"+agency+"')) <>  '"+agency+"') THEN 0 \n " +
-                " WHEN (col.name LIKE '%_QTE_MIN_SUPERPRIX' AND LEFT(col.name ,LEN('"+agency+"')) <>  '"+agency+"') THEN 0 \n " +
-                " WHEN (col.name LIKE '%_COMMENTAIRES' AND LEFT(col.name ,LEN('"+agency+"')) <>  '"+agency+"') THEN 0 \n " +
-                " WHEN col.name IN ('DataBaseSource','cbMarqSource') THEN 0 \n" +
-                " ELSE 1 END = 1 " +
-                "\n" +
-                "OPEN @getid\n" +
-                "FETCH NEXT\n" +
-                "FROM @getid INTO @MaColonne\n" +
-                "WHILE @@FETCH_STATUS = 0\n" +
-                "BEGIN\n" +
-                " SELECT @MonSQL = @MonSQL+ ',' + @MaColonne \n" +
-                "\n" +
-                " FETCH NEXT\n" +
-                "    FROM @getid INTO @MaColonne --, @name\n" +
-                "END\n" +
-                "CLOSE @getid\n" +
-                "DEALLOCATE @getid\n" +
-                "SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL)) \n" +
-                "\n" +
-                "SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''"+dataSource+"''  FROM '+ @TableName " +
-                "+ ' WHERE  cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='''+ @TableName +'''),''1900-01-01'')' " +
-                "+ ''   \n" +
-                "\n" +
-                "EXEC(@MonSQL)\n" +
-                "\n" +
-                "END";
+        return """
+                BEGIN
+                DECLARE @MaColonne AS VARCHAR(250);
+                DECLARE @MonSQL AS VARCHAR(MAX)='';
+                DECLARE @TableName AS VARCHAR(100) = '%s';
+                DECLARE @getid CURSOR
+
+                SET @getid = CURSOR FOR
+                SELECT col.name
+                FROM sys.tables tab
+                INNER JOIN sys.columns col
+                    ON tab.object_id = col.object_id
+                WHERE tab.name = @TableName
+                AND CASE WHEN col.name LIKE 'cb%%' THEN 0  WHEN (col.name LIKE '%%_P_MIN' AND LEFT(col.name ,LEN('%s')) <> '%s') THEN 0
+                  WHEN (col.name LIKE '%%_QTE_MIN_DG' AND LEFT(col.name ,LEN('%s')) <>  '%s') THEN 0
+                  WHEN (col.name LIKE '%%_P_MAX' AND LEFT(col.name ,LEN('%s')) <>  '%s') THEN 0
+                  WHEN (col.name LIKE '%%_P_GROSSISTES' AND LEFT(col.name ,LEN('%s')) <>  '%s') THEN 0
+                  WHEN (col.name LIKE '%%_QTE_MIN_G' AND LEFT(col.name ,LEN('%s')) <>  '%s') THEN 0
+                  WHEN (col.name LIKE '%%_SUPER_PRIX' AND LEFT(col.name ,LEN('%s')) <>  '%s') THEN 0
+                  WHEN (col.name LIKE '%%_QTE_MIN_SUPERPRIX' AND LEFT(col.name ,LEN('%s')) <>  '%s') THEN 0
+                  WHEN (col.name LIKE '%%_COMMENTAIRES' AND LEFT(col.name ,LEN('%s')) <>  '%s') THEN 0
+                  WHEN col.name IN ('DataBaseSource','cbMarqSource') THEN 0
+                 ELSE 1 END = 1
+                OPEN @getid
+                FETCH NEXT
+                FROM @getid INTO @MaColonne
+                WHILE @@FETCH_STATUS = 0
+                BEGIN
+                 SELECT @MonSQL = @MonSQL+ ',' + @MaColonne
+
+                 FETCH NEXT
+                    FROM @getid INTO @MaColonne --, @name
+                END
+                CLOSE @getid
+                DEALLOCATE @getid
+                SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL))
+
+                SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''%s''  FROM '+ @TableName + ' WHERE  cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='''+ @TableName +'''),''1900-01-01'')' + ''
+
+                EXEC(@MonSQL)
+
+                END\
+                """.formatted(table, agency, agency, agency, agency, agency, agency, agency, agency, agency, agency, agency, agency, agency, agency, agency, agency, dataSource);
     }
 
     public static String selectSourceTableFilterAgencyEnteteLink(String table,String dataSource,String agency){
-        return "BEGIN \n" +
-                "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                "DECLARE @MonSQL AS VARCHAR(MAX)=''; \n" +
-                "DECLARE @TableName AS VARCHAR(100) = '"+table+"'; \n" +
-                "DECLARE @getid CURSOR\n" +
-                "\n" +
-                "SET @getid = CURSOR FOR\n" +
-                "SELECT col.name\n" +
-                "FROM sys.tables tab\n" +
-                "INNER JOIN sys.columns col\n" +
-                "\tON tab.object_id = col.object_id\n" +
-                "WHERE tab.name = @TableName\n" +
-                "AND col.name NOT LIKE 'cb%'" +
-                "AND col.name NOT IN ('DataBaseSource','cbMarqSource')\n" +
-                "\n" +
-                "OPEN @getid\n" +
-                "FETCH NEXT\n" +
-                "FROM @getid INTO @MaColonne\n" +
-                "WHILE @@FETCH_STATUS = 0\n" +
-                "BEGIN\n" +
-                " SELECT @MonSQL = @MonSQL+ ',' + @MaColonne \n" +
-                "\n" +
-                " FETCH NEXT\n" +
-                "    FROM @getid INTO @MaColonne --, @name\n" +
-                "END\n" +
-                "CLOSE @getid\n" +
-                "DEALLOCATE @getid\n" +
-                "SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL)) \n" +
-                "\n" +
-                "SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''"+dataSource+
-                "''  FROM '+ @TableName " +
-                "+ ' WHERE  cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='''+ @TableName +'''),''1900-01-01'')' " +
-                "+ ' AND    EXISTS (SELECT  F_DOCENTETE.DO_Domaine,F_DOCENTETE.DO_Piece,F_DOCENTETE.DO_Type " +
-                "                   FROM    F_DOCENTETE " +
-                "                   WHERE   DE_No IN (SELECT DE_No FROM F_DEPOT WHERE DE_CodePostal = ''"+agency+"'')" +
-                "                   AND '+ @TableName +'.DO_Domaine = F_DOCENTETE.DO_Domaine " +
-                "                   AND '+ @TableName +'.DO_Type = F_DOCENTETE.DO_Type" +
-                "                   AND '+ @TableName +'.DO_Piece = F_DOCENTETE.DO_Piece)'   \n" +
-                "\n" +
-                "EXEC(@MonSQL)\n" +
-                "\n" +
-                "END";
+        return """
+                BEGIN
+                DECLARE @MaColonne AS VARCHAR(250);
+                DECLARE @MonSQL AS VARCHAR(MAX)='';
+                DECLARE @TableName AS VARCHAR(100) = '%s';
+                DECLARE @getid CURSOR
+
+                SET @getid = CURSOR FOR
+                SELECT col.name
+                FROM sys.tables tab
+                INNER JOIN sys.columns col
+                    ON tab.object_id = col.object_id
+                WHERE tab.name = @TableName
+                AND col.name NOT LIKE 'cb%%'AND col.name NOT IN ('DataBaseSource','cbMarqSource')
+
+                OPEN @getid
+                FETCH NEXT
+                FROM @getid INTO @MaColonne
+                WHILE @@FETCH_STATUS = 0
+                BEGIN
+                 SELECT @MonSQL = @MonSQL+ ',' + @MaColonne
+
+                 FETCH NEXT
+                    FROM @getid INTO @MaColonne --, @name
+                END
+                CLOSE @getid
+                DEALLOCATE @getid
+                SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL))
+
+                SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''%s''  FROM '+ @TableName + ' WHERE  cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='''+ @TableName +'''),''1900-01-01'')' + ' AND    EXISTS (SELECT  F_DOCENTETE.DO_Domaine,F_DOCENTETE.DO_Piece,F_DOCENTETE.DO_Type                    FROM    F_DOCENTETE                    WHERE   DE_No IN (SELECT DE_No FROM F_DEPOT WHERE DE_CodePostal = ''%s'')                   AND '+ @TableName +'.DO_Domaine = F_DOCENTETE.DO_Domaine                    AND '+ @TableName +'.DO_Type = F_DOCENTETE.DO_Type                   AND '+ @TableName +'.DO_Piece = F_DOCENTETE.DO_Piece)'
+
+                EXEC(@MonSQL)
+
+                END\
+                """.formatted(table, dataSource, agency);
     }
 
     public static String selectSourceTableFilterAgencyRegltLink(String table,String dataSource,String agency){
-        return "BEGIN \n" +
-                "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                "DECLARE @MonSQL AS VARCHAR(MAX)=''; \n" +
-                "DECLARE @TableName AS VARCHAR(100) = '"+table+"'; \n" +
-                "DECLARE @getid CURSOR\n" +
-                "\n" +
-                "SET @getid = CURSOR FOR\n" +
-                "SELECT col.name\n" +
-                "FROM sys.tables tab\n" +
-                "INNER JOIN sys.columns col\n" +
-                "\tON tab.object_id = col.object_id\n" +
-                "WHERE tab.name = @TableName\n" +
-                "AND col.name NOT LIKE 'cb%'" +
-                "AND col.name NOT IN ('DataBaseSource','cbMarqSource')\n" +
-                "\n" +
-                "OPEN @getid\n" +
-                "FETCH NEXT\n" +
-                "FROM @getid INTO @MaColonne\n" +
-                "WHILE @@FETCH_STATUS = 0\n" +
-                "BEGIN\n" +
-                " SELECT @MonSQL = @MonSQL+ ',' + @MaColonne \n" +
-                "\n" +
-                " FETCH NEXT\n" +
-                "    FROM @getid INTO @MaColonne --, @name\n" +
-                "END\n" +
-                "CLOSE @getid\n" +
-                "DEALLOCATE @getid\n" +
-                "SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL)) \n" +
-                "\n" +
-                "SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''"+dataSource+
-                "''  FROM '+ @TableName " +
-                "+ ' WHERE  cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='''+ @TableName +'''),''1900-01-01'')' " +
-                "+ ' AND    EXISTS (SELECT  F_DOCENTETE.DO_Domaine,F_DOCENTETE.DO_Piece,F_DOCENTETE.DO_Type " +
-                "                   FROM    F_DOCENTETE" +
-                "                   INNER JOIN F_REGLECH" +
-                "                       ON  F_REGLECH.DO_Domaine = F_DOCENTETE.DO_Domaine" +
-                "                       AND F_REGLECH.DO_Type = F_DOCENTETE.DO_Type" +
-                "                       AND F_REGLECH.DO_Piece = F_DOCENTETE.DO_Piece    " +
-                "                   INNER JOIN F_CREGLEMENT " +
-                "                       ON  F_REGLECH.RG_No = F_CREGLEMENT.RG_No" +
-                "                   WHERE   DE_No IN (SELECT DE_No FROM F_DEPOT WHERE DE_CodePostal = ''"+agency+"'')" +
-                "                   AND '+ @TableName +'.RG_No = F_CREGLEMENT.RG_No )'   \n" +
-                "\n" +
-                "EXEC(@MonSQL)\n" +
-                "\n" +
-                "END";
+        return """
+                BEGIN
+                DECLARE @MaColonne AS VARCHAR(250);
+                DECLARE @MonSQL AS VARCHAR(MAX)='';
+                DECLARE @TableName AS VARCHAR(100) = '%s';
+                DECLARE @getid CURSOR
+
+                SET @getid = CURSOR FOR
+                SELECT col.name
+                FROM sys.tables tab
+                INNER JOIN sys.columns col
+                    ON tab.object_id = col.object_id
+                WHERE tab.name = @TableName
+                AND col.name NOT LIKE 'cb%%'AND col.name NOT IN ('DataBaseSource','cbMarqSource')
+
+                OPEN @getid
+                FETCH NEXT
+                FROM @getid INTO @MaColonne
+                WHILE @@FETCH_STATUS = 0
+                BEGIN
+                 SELECT @MonSQL = @MonSQL+ ',' + @MaColonne
+
+                 FETCH NEXT
+                    FROM @getid INTO @MaColonne --, @name
+                END
+                CLOSE @getid
+                DEALLOCATE @getid
+                SELECT @MonSQL = SUBSTRING(@MonSQL,2,LEN(@MonSQL))
+
+                SELECT @MonSQL = 'SELECT ' + @MonSQL + ',[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource = [cbMarq],[DataBaseSource] = ''%s''  FROM '+ @TableName + ' WHERE  cbModification >= ISNULL((SELECT LastSynchro FROM config.SelectTable WHERE tableName='''+ @TableName +'''),''1900-01-01'')' + ' AND    EXISTS (SELECT  F_DOCENTETE.DO_Domaine,F_DOCENTETE.DO_Piece,F_DOCENTETE.DO_Type                    FROM    F_DOCENTETE                   INNER JOIN F_REGLECH                       ON  F_REGLECH.DO_Domaine = F_DOCENTETE.DO_Domaine                       AND F_REGLECH.DO_Type = F_DOCENTETE.DO_Type                       AND F_REGLECH.DO_Piece = F_DOCENTETE.DO_Piece                       INNER JOIN F_CREGLEMENT                        ON  F_REGLECH.RG_No = F_CREGLEMENT.RG_No                   WHERE   DE_No IN (SELECT DE_No FROM F_DEPOT WHERE DE_CodePostal = ''%s'')                   AND '+ @TableName +'.RG_No = F_CREGLEMENT.RG_No )'
+
+                EXEC(@MonSQL)
+
+                END\
+                """.formatted(table, dataSource, agency);
     }
 
     public static void listDeleteAllInfo(Connection sqlCon, String path, String file,String table,String listTable,String database)
@@ -362,8 +363,10 @@ public class Table {
 
     public static void deleteTempTable(Connection sqlCon,String table)
     {
-        String query = "IF OBJECT_ID('"+table+"') IS NOT NULL \n" +
-                "\tDROP TABLE "+table+";";
+        String query = """
+                IF OBJECT_ID('%s') IS NOT NULL
+                    DROP TABLE %s;\
+                """.formatted(table, table);
         executeQuery(sqlCon, query);
     }
 
@@ -401,39 +404,41 @@ public class Table {
     public static void deleteItem(Connection sqlCon, String path,String file)
     {
         String query =
-                "BEGIN TRY\n" +
-                        "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                        "DECLARE @MonSQL AS VARCHAR(MAX)=''; \n" +
-                        "DECLARE @TableName AS VARCHAR(100) = 'F_ARTICLE';\n" +
-                        "DECLARE @isDataSource AS INT = 1; \n" +
-                        "\n" +
-                        "SELECT @MonSQL = 'DELETE FROM '+@TableName+' WHERE EXISTS (SELECT 1 FROM '+@TableName+'_SUPPR WHERE '\n" +
-                        "+@TableName+'.cbMarqSource = '+@TableName+'_SUPPR.cbMarq'\n" +
-                        "\n" +
-                        "IF @isDataSource = 1\n" +
-                        "\tSELECT @MonSQL = @MonSQL + ' AND '+@TableName+'.DataBaseSource = '+@TableName+'_SUPPR.DataBaseSource)'\n" +
-                        "\n" +
-                        "SELECT @MonSQL = @MonSQL + 'IF OBJECT_ID('''+@TableName+'_SUPPR'') IS NOT NULL DROP TABLE '+@TableName+'_SUPPR'\n" +
-                        "\n" +
-                        "SELECT (@MonSQL)\n" +
-                        "\n" +
-                        "END TRY\n" +
-                        "BEGIN CATCH \n" +
-                        "\tINSERT INTO config.DB_Errors\n" +
-                        "\tVALUES\n" +
-                        "\t(\n" +
-                        "\t\tSUSER_SNAME(),\n" +
-                        "\t\tERROR_NUMBER(),\n" +
-                        "\t\tERROR_STATE(),\n" +
-                        "\t\tERROR_SEVERITY(),\n" +
-                        "\t\tERROR_LINE(),\n" +
-                        "\t\tERROR_PROCEDURE(),\n" +
-                        "\t\tERROR_MESSAGE(),\n" +
-                        "\t\t@TableName,\n" +
-                        "\t\t@MonSQL,\n" +
-                        "\t\tGETDATE()\n" +
-                        "\t);\n" +
-                        "END CATCH\n";
+                """
+                        BEGIN TRY
+                        DECLARE @MaColonne AS VARCHAR(250);
+                        DECLARE @MonSQL AS VARCHAR(MAX)='';
+                        DECLARE @TableName AS VARCHAR(100) = 'F_ARTICLE';
+                        DECLARE @isDataSource AS INT = 1;
+
+                        SELECT @MonSQL = 'DELETE FROM '+@TableName+' WHERE EXISTS (SELECT 1 FROM '+@TableName+'_SUPPR WHERE '
+                        +@TableName+'.cbMarqSource = '+@TableName+'_SUPPR.cbMarq'
+
+                        IF @isDataSource = 1
+                            SELECT @MonSQL = @MonSQL + ' AND '+@TableName+'.DataBaseSource = '+@TableName+'_SUPPR.DataBaseSource)'
+
+                        SELECT @MonSQL = @MonSQL + 'IF OBJECT_ID('''+@TableName+'_SUPPR'') IS NOT NULL DROP TABLE '+@TableName+'_SUPPR'
+
+                        SELECT (@MonSQL)
+
+                        END TRY
+                        BEGIN CATCH
+                            INSERT INTO config.DB_Errors
+                            VALUES
+                            (
+                                SUSER_SNAME(),
+                                ERROR_NUMBER(),
+                                ERROR_STATE(),
+                                ERROR_SEVERITY(),
+                                ERROR_LINE(),
+                                ERROR_PROCEDURE(),
+                                ERROR_MESSAGE(),
+                                @TableName,
+                                @MonSQL,
+                                GETDATE()
+                            );
+                        END CATCH
+                        """;
         if ((new File(path + "\\deleteList" + file)).exists())
         {
             executeQuery(sqlCon, query);
@@ -442,98 +447,102 @@ public class Table {
     }
 
     public static String listDelete(String table,String listTable,String database){
-        return  "BEGIN TRY\n" +
-                "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                "DECLARE @MonSQL AS VARCHAR(MAX)=''; \n" +
-                "DECLARE @TableName AS VARCHAR(100) = '"+table+"';\n" +
-                "DECLARE @TableConfig AS VARCHAR(100) = '"+listTable+"'; \n" +
-                "DECLARE @getid CURSOR\n" +
-                "\n" +
-                "SET @getid = CURSOR FOR\n" +
-                "SELECT col.name\n" +
-                "FROM sys.tables tab\n" +
-                "INNER JOIN sys.columns col\n" +
-                "\tON tab.object_id = col.object_id\n" +
-                "WHERE tab.name = @TableConfig\n" +
-                "\n" +
-                "OPEN @getid\n" +
-                "FETCH NEXT\n" +
-                "FROM @getid INTO @MaColonne\n" +
-                "WHILE @@FETCH_STATUS = 0\n" +
-                "BEGIN\n" +
-                " IF @MaColonne ='DataBaseSource' \n"+
-                " SELECT @MonSQL = @MonSQL+ ',DataBaseSource = ''"+database+"'' ' \n" +
-                " ELSE \n" +
-                "   SELECT @MonSQL = @MonSQL+ ',lart.' + @MaColonne \n" +
-                " FETCH NEXT\n" +
-                "    FROM @getid INTO @MaColonne \n" +
-                "END\n" +
-                "CLOSE @getid\n" +
-                "DEALLOCATE @getid\n" +
-                "SELECT @MonSQL = 'SELECT '+ SUBSTRING(@MonSQL,2,LEN(@MonSQL))+' FROM config.'+@TableConfig\n" +
-                "+' lart LEFT JOIN '+@TableName+ ' fart ON lart.cbMarq = fart.cbMarq WHERE fart.cbMarq IS NULL ';\n" +
-                "\n" +
-                "EXEC (@MonSQL)\n" +
-                "\n" +
-                "END TRY\n" +
-                "BEGIN CATCH \n" +
-                "\tINSERT INTO config.DB_Errors\n" +
-                "\tVALUES\n" +
-                "\t(\n" +
-                "\t\tSUSER_SNAME(),\n" +
-                "\t\tERROR_NUMBER(),\n" +
-                "\t\tERROR_STATE(),\n" +
-                "\t\tERROR_SEVERITY(),\n" +
-                "\t\tERROR_LINE(),\n" +
-                "\t\tERROR_PROCEDURE(),\n" +
-                "\t\tERROR_MESSAGE(),\n" +
-                "\t\t@TableName,\n" +
-                "\t\t@MonSQL,\n" +
-                "\t\tGETDATE()\n" +
-                "\t);\n" +
-                "END CATCH\n";
+        return  """
+                BEGIN TRY
+                DECLARE @MaColonne AS VARCHAR(250);
+                DECLARE @MonSQL AS VARCHAR(MAX)='';
+                DECLARE @TableName AS VARCHAR(100) = '%s';
+                DECLARE @TableConfig AS VARCHAR(100) = '%s';
+                DECLARE @getid CURSOR
+
+                SET @getid = CURSOR FOR
+                SELECT col.name
+                FROM sys.tables tab
+                INNER JOIN sys.columns col
+                    ON tab.object_id = col.object_id
+                WHERE tab.name = @TableConfig
+
+                OPEN @getid
+                FETCH NEXT
+                FROM @getid INTO @MaColonne
+                WHILE @@FETCH_STATUS = 0
+                BEGIN
+                 IF @MaColonne ='DataBaseSource'
+                 SELECT @MonSQL = @MonSQL+ ',DataBaseSource = ''%s'' '
+                 ELSE
+                   SELECT @MonSQL = @MonSQL+ ',lart.' + @MaColonne
+                 FETCH NEXT
+                    FROM @getid INTO @MaColonne
+                END
+                CLOSE @getid
+                DEALLOCATE @getid
+                SELECT @MonSQL = 'SELECT '+ SUBSTRING(@MonSQL,2,LEN(@MonSQL))+' FROM config.'+@TableConfig
+                +' lart LEFT JOIN '+@TableName+ ' fart ON lart.cbMarq = fart.cbMarq WHERE fart.cbMarq IS NULL ';
+
+                EXEC (@MonSQL)
+
+                END TRY
+                BEGIN CATCH
+                    INSERT INTO config.DB_Errors
+                    VALUES
+                    (
+                        SUSER_SNAME(),
+                        ERROR_NUMBER(),
+                        ERROR_STATE(),
+                        ERROR_SEVERITY(),
+                        ERROR_LINE(),
+                        ERROR_PROCEDURE(),
+                        ERROR_MESSAGE(),
+                        @TableName,
+                        @MonSQL,
+                        GETDATE()
+                    );
+                END CATCH
+                """.formatted(table, listTable, database);
     }
     public static String updateTableDest(String key,String exclude,String tableName,String tableNameDest,String filename,int unibase){
         String[] keys = key.split(",");
-        StringBuilder sql = new StringBuilder("\n" +
-                "BEGIN TRY\n" +
-                "SET DATEFORMAT ymd;\n" +
-                "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                "DECLARE @MonSQL AS VARCHAR(MAX) = ''; \n" +
-                "DECLARE @UniBase AS INT = "+unibase+"; \n" +
-                "DECLARE @isKey AS INT=CASE WHEN '" + key + "' = '' THEN 0 ELSE 1 END; \n" +
-                "DECLARE @Key AS NVARCHAR(250) = '" + key + "'; \n" +
-                "DECLARE @TableName AS VARCHAR(100) = '" + tableName + "'; \n" +
-                "DECLARE @TableNameDest AS VARCHAR(100) = '" + tableNameDest + "'; \n" +
-                "DECLARE @getid CURSOR\n" +
-                "\n" +
-                "SET @getid = CURSOR FOR\n" +
-                "SELECT col.name\n" +
-                "FROM sys.tables tab\n" +
-                "INNER JOIN sys.columns col\n" +
-                "\tON tab.object_id = col.object_id\n" +
-                "WHERE tab.name = @TableName\n" +
-                "AND col.name NOT LIKE 'cb%'\n" +
-                "AND col.name NOT IN (" + exclude + ")\n" +
-                "\n" +
-                "OPEN @getid\n" +
-                "FETCH NEXT\n" +
-                "FROM @getid INTO @MaColonne\n" +
-                "WHILE @@FETCH_STATUS = 0\n" +
-                "BEGIN\n" +
-                " SELECT @MonSQL = @MonSQL+ ',' + @MaColonne +' = ' + @TableNameDest + '.' + @MaColonne \n" +
-                " FETCH NEXT\n" +
-                "    FROM @getid INTO @MaColonne \n" +
-                "END\n" +
-                "CLOSE @getid\n" +
-                "DEALLOCATE @getid\n" +
-                " SELECT @MonSQL = 'IF OBJECT_ID('''+@TableNameDest+''') IS NOT NULL UPDATE '+@TableName+' SET '+ SUBSTRING(@MonSQL,2,LEN(@MonSQL));\n" +
-                " SELECT @MonSQL = @MonSQL + ' FROM ' + @TableNameDest  +' WHERE '\n" +
-                "IF @isKey = 0 \n" +
-                "\tSELECT @MonSQL = @MonSQL + @TableName + '.cbMarqSource = '+ @TableNameDest+'.cbMarqSource '\n" +
-                "\t\t\t\t\t\t+' AND CASE WHEN '+CAST(@UniBase AS VARCHAR(150))+'= 0 AND '+@TableName + '.DataBaseSource = '+ @TableNameDest+'.DataBaseSource THEN 1'\n" +
-                "\t\t\t\t\t\t+'             WHEN '+CAST(@UniBase AS VARCHAR(150))+'= 1 THEN 1 ELSE 0 END = 1'\n" +
-                "ELSE \n");
+        StringBuilder sql = new StringBuilder("""
+
+                BEGIN TRY
+                SET DATEFORMAT ymd;
+                DECLARE @MaColonne AS VARCHAR(250);
+                DECLARE @MonSQL AS VARCHAR(MAX) = '';
+                DECLARE @UniBase AS INT = %s;
+                DECLARE @isKey AS INT=CASE WHEN '%s' = '' THEN 0 ELSE 1 END;
+                DECLARE @Key AS NVARCHAR(250) = '%s';
+                DECLARE @TableName AS VARCHAR(100) = '%s';
+                DECLARE @TableNameDest AS VARCHAR(100) = '%s';
+                DECLARE @getid CURSOR
+
+                SET @getid = CURSOR FOR
+                SELECT col.name
+                FROM sys.tables tab
+                INNER JOIN sys.columns col
+                    ON tab.object_id = col.object_id
+                WHERE tab.name = @TableName
+                AND col.name NOT LIKE 'cb%%'
+                AND col.name NOT IN (%s)
+
+                OPEN @getid
+                FETCH NEXT
+                FROM @getid INTO @MaColonne
+                WHILE @@FETCH_STATUS = 0
+                BEGIN
+                 SELECT @MonSQL = @MonSQL+ ',' + @MaColonne +' = ' + @TableNameDest + '.' + @MaColonne
+                 FETCH NEXT
+                    FROM @getid INTO @MaColonne
+                END
+                CLOSE @getid
+                DEALLOCATE @getid
+                 SELECT @MonSQL = 'IF OBJECT_ID('''+@TableNameDest+''') IS NOT NULL UPDATE '+@TableName+' SET '+ SUBSTRING(@MonSQL,2,LEN(@MonSQL));
+                 SELECT @MonSQL = @MonSQL + ' FROM ' + @TableNameDest  +' WHERE '
+                IF @isKey = 0
+                    SELECT @MonSQL = @MonSQL + @TableName + '.cbMarqSource = '+ @TableNameDest+'.cbMarqSource '
+                                        +' AND CASE WHEN '+CAST(@UniBase AS VARCHAR(150))+'= 0 AND '+@TableName + '.DataBaseSource = '+ @TableNameDest+'.DataBaseSource THEN 1'
+                                        +'             WHEN '+CAST(@UniBase AS VARCHAR(150))+'= 1 THEN 1 ELSE 0 END = 1'
+                ELSE
+                """.formatted(unibase, key, key, tableName, tableNameDest, exclude));
         for (int i = 0;i< keys.length;i++) {
             if(i== 0 ) {
                 sql.append(" SELECT @MonSQL = @MonSQL ");
@@ -1036,14 +1045,13 @@ public class Table {
 
     public static String updateSelectTableQuery(String table)
     {
-        return  "DECLARE @cbModification DATETIME = (SELECT MAX(cbModification) FROM " + table + ");" +
-                "DECLARE @table VARCHAR(150) = '" + table + "'" +
-                "IF EXISTS(SELECT 1 FROM config.SelectTable WHERE tableName = @table) \n" +
-                " UPDATE config.SelectTable " +
-                "     SET lastSynchro =  @cbModification \n" +
-                " WHERE tableName = @table; \n" +
-                "         ELSE \n" +
-                "             INSERT INTO config.SelectTable(tableName,lastSynchro) VALUES(@table,@cbModification) \n";
+        return  """
+                DECLARE @cbModification DATETIME = (SELECT MAX(cbModification) FROM %s);DECLARE @table VARCHAR(150) = '%s'IF EXISTS(SELECT 1 FROM config.SelectTable WHERE tableName = @table)
+                 UPDATE config.SelectTable      SET lastSynchro =  @cbModification
+                 WHERE tableName = @table;
+                         ELSE
+                             INSERT INTO config.SelectTable(tableName,lastSynchro) VALUES(@table,@cbModification)
+                """.formatted(table, table);
     }
 
     public static void getData(Connection sqlCon, String query,String table,String path,String file)
@@ -1090,35 +1098,36 @@ public class Table {
 
     public static void initTableParam(Connection sqlCon,String table,String configTable,String keyColumn)
     {
-        String query = " BEGIN TRY\n" +
-                "DECLARE @MaColonne AS VARCHAR(250);\n" +
-                "DECLARE @MonSQL AS VARCHAR(MAX)=''; \n" +
-                "DECLARE @TableName AS VARCHAR(100) = '"+table+"';\n" +
-                "DECLARE @configTable AS VARCHAR(100) = '"+configTable+"';\n" +
-                "DECLARE @keyColumn AS VARCHAR(250) = '"+keyColumn+"';\n" +
-                "\n" +
-                "SELECT @MonSQL = ' INSERT INTO config.'+@configTable+' SELECT '+@keyColumn+',cbMarq,GETDATE() FROM ( SELECT DISTINCT '+@keyColumn+',cbMarq FROM '+@TableName\n" +
-                "+' EXCEPT SELECT '+@keyColumn+',cbMarq FROM config.'+@configTable + ')A'" +
-                "\n" +
-                "EXEC (@MonSQL)\n" +
-                "\n" +
-                "END TRY\n" +
-                "BEGIN CATCH \n" +
-                "\tINSERT INTO config.DB_Errors\n" +
-                "\tVALUES\n" +
-                "\t(\n" +
-                "\t\tSUSER_SNAME(),\n" +
-                "\t\tERROR_NUMBER(),\n" +
-                "\t\tERROR_STATE(),\n" +
-                "\t\tERROR_SEVERITY(),\n" +
-                "\t\tERROR_LINE(),\n" +
-                "\t\tERROR_PROCEDURE(),\n" +
-                "\t\tERROR_MESSAGE(),\n" +
-                "\t\t@TableName,\n" +
-                "\t\t@MonSQL,\n" +
-                "\t\tGETDATE()\n" +
-                "\t);\n" +
-                "END CATCH\n";
+        String query = """
+                 BEGIN TRY
+                DECLARE @MaColonne AS VARCHAR(250);
+                DECLARE @MonSQL AS VARCHAR(MAX)='';
+                DECLARE @TableName AS VARCHAR(100) = '%s';
+                DECLARE @configTable AS VARCHAR(100) = '%s';
+                DECLARE @keyColumn AS VARCHAR(250) = '%s';
+
+                SELECT @MonSQL = ' INSERT INTO config.'+@configTable+' SELECT '+@keyColumn+',cbMarq,GETDATE() FROM ( SELECT DISTINCT '+@keyColumn+',cbMarq FROM '+@TableName
+                +' EXCEPT SELECT '+@keyColumn+',cbMarq FROM config.'+@configTable + ')A'
+                EXEC (@MonSQL)
+
+                END TRY
+                BEGIN CATCH
+                    INSERT INTO config.DB_Errors
+                    VALUES
+                    (
+                        SUSER_SNAME(),
+                        ERROR_NUMBER(),
+                        ERROR_STATE(),
+                        ERROR_SEVERITY(),
+                        ERROR_LINE(),
+                        ERROR_PROCEDURE(),
+                        ERROR_MESSAGE(),
+                        @TableName,
+                        @MonSQL,
+                        GETDATE()
+                    );
+                END CATCH
+                """.formatted(table, configTable, keyColumn);
         executeQuery(sqlCon, query);
     }
 }
