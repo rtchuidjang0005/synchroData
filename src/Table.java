@@ -9,6 +9,10 @@ import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 
+import org.apache.avro.Conversions;
+import org.apache.avro.LogicalType;
+import org.apache.avro.LogicalTypes;
+import org.apache.avro.file.CodecFactory;
 import org.apache.avro.file.DataFileWriter;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericDatumWriter;
@@ -18,7 +22,20 @@ import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.io.DatumReader;
 
 import java.io.File;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.nio.ByteBuffer;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import com.microsoft.sqlserver.jdbc.ISQLServerBulkData;
+import com.microsoft.sqlserver.jdbc.SQLServerBulkCopy;
+import com.microsoft.sqlserver.jdbc.SQLServerBulkCopyOptions;
+
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
@@ -37,6 +54,145 @@ public class Table {
         return value == null || !"0".equals(value.toString());
     }
 
+    /**
+     * T-SQL qui, avant une insertion en bloc, écarte de la table temporaire les lignes qui violeraient
+     * une clé étrangère de la table cible. Les contraintes sont lues dans sys.foreign_keys au moment
+     * de l'exécution ; chaque ligne écartée est tracée dans config.DB_Errors.
+     *
+     * @param rowLabel expression SQL (alias t) décrivant la ligne dans le journal
+     */
+    public static String foreignKeyCheck(String targetTable, String tempTable, String rowLabel, String filename) {
+        return """
+                DECLARE @fkTarget SYSNAME = N'%s', @fkTemp SYSNAME = N'%s', @fkFile NVARCHAR(400) = N'%s';
+                DECLARE @fkLabel NVARCHAR(MAX) = N'%s';
+                DECLARE @fkId INT, @fkName SYSNAME, @fkRef NVARCHAR(400), @fkCond NVARCHAR(MAX), @fkNotNull NVARCHAR(MAX),
+                        @fkCols NVARCHAR(MAX), @fkMissing INT, @fkSql NVARCHAR(MAX);
+                DECLARE fkCur CURSOR LOCAL FAST_FORWARD FOR
+                    SELECT fk.object_id, fk.name,
+                           QUOTENAME(OBJECT_SCHEMA_NAME(fk.referenced_object_id)) + N'.' + QUOTENAME(OBJECT_NAME(fk.referenced_object_id))
+                    FROM sys.foreign_keys fk
+                    WHERE fk.parent_object_id = OBJECT_ID(@fkTarget) AND fk.is_disabled = 0
+                      AND fk.referenced_object_id <> fk.parent_object_id;
+                OPEN fkCur;
+                FETCH NEXT FROM fkCur INTO @fkId, @fkName, @fkRef;
+                WHILE @@FETCH_STATUS = 0
+                BEGIN
+                    SELECT @fkCond = N'', @fkNotNull = N'', @fkCols = N'', @fkMissing = 0;
+                    SELECT @fkCond = @fkCond + N' AND r.' + QUOTENAME(rc.name) + N' = t.' + QUOTENAME(pc.name),
+                           @fkNotNull = @fkNotNull + N' AND t.' + QUOTENAME(pc.name) + N' IS NOT NULL',
+                           @fkCols = @fkCols + CASE WHEN @fkCols = N'' THEN N'' ELSE N', ' END + pc.name,
+                           @fkMissing = @fkMissing + CASE WHEN tc.name IS NULL THEN 1 ELSE 0 END
+                    FROM sys.foreign_key_columns fkc
+                    INNER JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+                    INNER JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+                    LEFT JOIN tempdb.sys.columns tc ON tc.object_id = OBJECT_ID(N'tempdb..' + @fkTemp)
+                                                   AND tc.name COLLATE DATABASE_DEFAULT = pc.name COLLATE DATABASE_DEFAULT
+                    WHERE fkc.constraint_object_id = @fkId;
+
+                    -- contrôle seulement si toutes les colonnes de la clé sont présentes dans la table temporaire
+                    IF @fkMissing = 0
+                    BEGIN
+                        SET @fkSql = N'INSERT INTO config.DB_Errors SELECT SUSER_SNAME(), 547, NULL, NULL, NULL, NULL, N'''
+                            + REPLACE(N'Clé étrangère ' + @fkName + N' : ' + @fkCols + N' introuvable dans ' + @fkRef + N', ligne non reprise', N'''', N'''''')
+                            + N''', ' + @fkLabel + N' + N'' fileName : ' + REPLACE(@fkFile, N'''', N'''''') + N''', N''' + @fkTarget + N''', GETDATE()'
+                            + N' FROM ' + @fkTemp + N' t WHERE 1 = 1' + @fkNotNull
+                            + N' AND NOT EXISTS (SELECT 1 FROM ' + @fkRef + N' r WHERE 1 = 1' + @fkCond + N');'
+                            + N' DELETE t FROM ' + @fkTemp + N' t WHERE 1 = 1' + @fkNotNull
+                            + N' AND NOT EXISTS (SELECT 1 FROM ' + @fkRef + N' r WHERE 1 = 1' + @fkCond + N');';
+                        EXEC (@fkSql);
+                    END
+                    FETCH NEXT FROM fkCur INTO @fkId, @fkName, @fkRef;
+                END
+                CLOSE fkCur;
+                DEALLOCATE fkCur;
+                """.formatted(targetTable, tempTable, filename.replace("'", "''"), rowLabel.replace("'", "''"));
+    }
+
+    /** Expression T-SQL : DO_Piece sans son premier caractère numérique (en partant de la gauche). */
+    private static String pieceSansPremierChiffre(String alias) {
+        return "STUFF(" + alias + ".DO_Piece, PATINDEX('%[0-9]%', " + alias + ".DO_Piece), 1, '')";
+    }
+
+    /**
+     * T-SQL qui renomme dans F_DOCENTETE_DEST les pièces déjà présentes dans F_DOCENTETE pour un autre document
+     * (autre base ou document local) : le premier caractère numérique en partant de la gauche est supprimé.
+     */
+    public static String renameExistingPieceEntete(String filename) {
+        String newPiece = pieceSansPremierChiffre("dest");
+        return """
+                IF OBJECT_ID('F_DOCENTETE_DEST') IS NOT NULL
+                BEGIN
+                    INSERT INTO config.DB_Errors
+                    SELECT SUSER_SNAME(), NULL, NULL, NULL, NULL, NULL
+                         , 'Pièce déjà existante, document renommé'
+                         , 'Domaine : ' + CAST(dest.DO_Domaine AS NVARCHAR(10)) + ' Type : ' + CAST(dest.DO_Type AS NVARCHAR(10))
+                           + ' Piece : ' + dest.DO_Piece + ' -> ' + %1$s
+                           + ' cbMarq : ' + CAST(dest.cbMarqSource AS NVARCHAR(20)) + ' database : ' + ISNULL(dest.DataBaseSource,'')
+                           + ' fileName : %2$s'
+                         , 'F_DOCENTETE', GETDATE()
+                    FROM F_DOCENTETE_DEST dest
+                    WHERE PATINDEX('%%[0-9]%%', dest.DO_Piece) > 0
+                    AND EXISTS (SELECT 1 FROM F_DOCENTETE src
+                                WHERE src.DO_Piece = dest.DO_Piece AND src.DO_Domaine = dest.DO_Domaine AND src.DO_Type = dest.DO_Type
+                                AND NOT (ISNULL(src.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'')
+                                         AND ISNULL(src.cbMarqSource,0) = ISNULL(dest.cbMarqSource,0)))
+
+                    UPDATE dest SET DO_Piece = %1$s
+                    FROM F_DOCENTETE_DEST dest
+                    WHERE PATINDEX('%%[0-9]%%', dest.DO_Piece) > 0
+                    AND EXISTS (SELECT 1 FROM F_DOCENTETE src
+                                WHERE src.DO_Piece = dest.DO_Piece AND src.DO_Domaine = dest.DO_Domaine AND src.DO_Type = dest.DO_Type
+                                AND NOT (ISNULL(src.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'')
+                                         AND ISNULL(src.cbMarqSource,0) = ISNULL(dest.cbMarqSource,0)))
+                END
+                """.formatted(newPiece, filename.replace("'", "''"));
+    }
+
+    /**
+     * T-SQL qui reporte sur une table liée à l'entête (lignes, règlements, échéances, suppressions) le renommage
+     * fait par {@link #renameExistingPieceEntete} : la pièce d'origine n'existe pas pour cette base mais la pièce
+     * sans son premier chiffre existe.
+     */
+    public static String renameExistingPieceLink(String destTable) {
+        String newPiece = pieceSansPremierChiffre("dest");
+        return """
+                IF OBJECT_ID('%1$s') IS NOT NULL
+                UPDATE dest SET DO_Piece = %2$s
+                FROM %1$s dest
+                WHERE PATINDEX('%%[0-9]%%', dest.DO_Piece) > 0
+                AND NOT EXISTS (SELECT 1 FROM F_DOCENTETE e
+                                WHERE e.DO_Piece = dest.DO_Piece AND e.DO_Domaine = dest.DO_Domaine AND e.DO_Type = dest.DO_Type
+                                AND ISNULL(e.DataBaseSource,'') = ISNULL(dest.DataBaseSource,''))
+                AND EXISTS (SELECT 1 FROM F_DOCENTETE e
+                            WHERE e.DO_Piece = %2$s AND e.DO_Domaine = dest.DO_Domaine AND e.DO_Type = dest.DO_Type
+                            AND ISNULL(e.DataBaseSource,'') = ISNULL(dest.DataBaseSource,''))
+                """.formatted(destTable, newPiece);
+    }
+
+    /**
+     * URL JDBC à partir du nom de serveur tel qu'on le saisit dans SSMS :
+     * "serveur,port" -> "serveur:port", préfixe "tcp:" retiré, "." / "(local)" -> localhost.
+     * "serveur\INSTANCE" est déjà compris par le pilote et reste tel quel.
+     */
+    public static String jdbcUrl(Object serverName, Object database) {
+        String server = serverName == null ? "" : serverName.toString().trim();
+        if (server.regionMatches(true, 0, "tcp:", 0, 4)) {
+            server = server.substring(4).trim();
+        }
+        int comma = server.lastIndexOf(',');
+        String port = "";
+        if (comma >= 0) {
+            port = server.substring(comma + 1).trim();
+            server = server.substring(0, comma).trim();
+        }
+        if (server.equals(".") || server.equalsIgnoreCase("(local)") || server.equalsIgnoreCase("(localdb)")) {
+            server = "localhost";
+        } else if (server.startsWith(".\\") || server.regionMatches(true, 0, "(local)\\", 0, 8)) {
+            server = "localhost" + server.substring(server.indexOf('\\'));
+        }
+        return "jdbc:sqlserver://" + server + (port.isEmpty() ? "" : ":" + port) + ";databaseName=" + database;
+    }
+
     public static String applyUpdateFlag(String query, String tableName) {
         return query.replace("{{UPDATE_ENABLED}}", isUpdateEnabled(tableName) ? "1" : "0");
     }
@@ -46,7 +202,7 @@ public class Table {
             System.out.println("Mise à jour des valeurs existantes désactivée pour " + tableName);
             return;
         }
-        updateTableDest(sqlCon, key, exclude, tableName, tableNameDest, filename, unibase);
+        executeQuery(sqlCon, updateTableDest(key, exclude, tableName, tableNameDest, filename, unibase));
     }
 
     private static final String DATE_FORMAT = "yyyy-MM-dd HH:mm:ss.s";
@@ -348,7 +504,6 @@ public class Table {
     {
         String query = listDelete(table,listTable,database);
         writeToFileAvro(path + "\\" + file, query, sqlCon);
-        writeOnFile(path + "\\" + file, query, sqlCon);
 
         query = listDeleteItem(table,listTable);
         executeQuery(sqlCon, query);
@@ -523,6 +678,9 @@ public class Table {
                 WHERE tab.name = @TableName
                 AND col.name NOT LIKE 'cb%%'
                 AND col.name NOT IN (%s)
+                -- seulement les colonnes présentes aussi dans la table reçue (la base source peut en avoir moins)
+                AND EXISTS (SELECT 1 FROM sys.columns colDest
+                            WHERE colDest.object_id = OBJECT_ID(@TableNameDest) AND colDest.name = col.name)
 
                 OPEN @getid
                 FETCH NEXT
@@ -554,34 +712,52 @@ public class Table {
         sql.append("\n").append("EXEC (@MonSQL) \n").append("\n").append("END TRY\n").append("BEGIN CATCH \n").append("\tINSERT INTO config.DB_Errors\n").append("\tVALUES\n").append("\t(\n").append("\t\tSUSER_SNAME(),\n").append("\t\tERROR_NUMBER(),\n").append("\t\tERROR_STATE(),\n").append("\t\tERROR_SEVERITY(),\n").append("\t\tERROR_LINE(),\n").append("\t\tERROR_PROCEDURE(),\n").append("\t\tERROR_MESSAGE(),\n").append("\t\t@TableName + ' ").append(filename).append("',\n").append("\t\t@MonSQL,\n").append("\t\tGETDATE()\n").append("\t);\n").append("END CATCH");
         return sql.toString();
     }
+    // Réception (UpdateData) : c'est le zip reçu qui est archivé, les fichiers décompressés sont supprimés une fois traités
+    private static boolean deleteProcessedFiles = false;
+
+    public static void setDeleteProcessedFiles(boolean delete) {
+        deleteProcessedFiles = delete;
+    }
+
     public static void archiveDocument(String archive, String source,String file)
     {
-        String[] folder = file.split("_");
-        String year = folder[1].substring(0,4);
-        String month = folder[1].substring(4,6);
-        String day = folder[1].substring(6,8);
+        if (deleteProcessedFiles) {
+            try {
+                Files.deleteIfExists(Paths.get(source + "\\" + file));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return;
+        }
+        moveToArchive(archive, source, file);
+    }
 
-        File filePath = new File(archive);
-        if(!filePath.exists())
-            filePath.mkdir();
+    // Première date aaaammjj valide trouvée dans un nom de fichier (ex. file_20261017001351.zip)
+    private static final java.util.regex.Pattern FILE_DATE = java.util.regex.Pattern.compile("(20\\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])");
 
-        filePath = new File(archive + "\\" + year );
-        if(!filePath.exists())
-            filePath.mkdir();
-
-        filePath = new File(archive + "\\" + year + "\\" + month);
-        if(!filePath.exists())
-            filePath.mkdir();
-
-        filePath = new File(archive + "\\" + year + "\\" + month +"\\"+ day);
-        if(!filePath.exists())
-            filePath.mkdir();
-
-        archive = archive + "\\" + year + "\\" + month +"\\"+ day;
+    // Déplace le fichier dans archive\aaaa\mm\jj. La date vient du nom du fichier,
+    // ou à défaut de sa date de modification. Une erreur d'archivage n'interrompt pas le traitement.
+    public static void moveToArchive(String archive, String source,String file)
+    {
+        Path sourceFile = Paths.get(source, file);
         try {
-            Files.move(Paths.get(source+"\\"+file),Paths.get(archive + "\\" + file),REPLACE_EXISTING);
-        } catch (IOException e) {
-            e.printStackTrace();
+            String year, month, day;
+            java.util.regex.Matcher m = FILE_DATE.matcher(file);
+            if (m.find()) {
+                year = m.group(1);
+                month = m.group(2);
+                day = m.group(3);
+            } else {
+                LocalDate modified = LocalDate.ofInstant(Files.getLastModifiedTime(sourceFile).toInstant(), java.time.ZoneId.systemDefault());
+                year = String.format("%04d", modified.getYear());
+                month = String.format("%02d", modified.getMonthValue());
+                day = String.format("%02d", modified.getDayOfMonth());
+            }
+            Path target = Paths.get(archive, year, month, day);
+            Files.createDirectories(target);
+            Files.move(sourceFile, target.resolve(file), REPLACE_EXISTING);
+        } catch (IOException | RuntimeException e) {
+            System.out.println("Archivage impossible de " + sourceFile + " : " + e);
         }
     }
 
@@ -614,120 +790,144 @@ public class Table {
         }
     }
 
-    // Fonction de mappage SQL -> Avro
-    private static String mapSQLTypeToAvroType(String sqlType) {
-        switch (sqlType.toLowerCase()) {
-            case "int":
-            case "integer":
-                return "[\"null\", \"int\"]";
-            case "bigint":
-                return "[\"null\", \"long\"]";
-            case "float":
-            case "real":
-                return "[\"null\", \"float\"]";
-            case "double":
-            case "numeric":
-            case "decimal":
-                return "[\"null\", \"double\"]";
-            case "bit":
-            case "boolean":
-                return "[\"null\", \"boolean\"]";
-            case "char":
-            case "varchar":
-            case "nvarchar":
-            case "text":
-                return "[\"null\", \"string\"]";
-            case "date":
-            case "time":
-            case "timestamp":
-                return "[\"null\", {\"type\": \"string\", \"logicalType\": \"timestamp-millis\"}]";
-            case "smallint":
-                return "[\"null\", \"int\"]";
-            case "tinyint":
-                return "[\"null\", \"int\"]";
+    // Nombre de lignes envoyées à SQL Server par lot lors de l'import Avro (bulk copy)
+    private static final int AVRO_BULK_BATCH_SIZE = 50000;
+
+    private static final Conversions.DecimalConversion DECIMAL_CONVERSION = new Conversions.DecimalConversion();
+
+    // Schéma Avro (non nul) correspondant à la colonne i du ResultSet, à partir du type JDBC
+    private static org.apache.avro.Schema mapSQLTypeToAvroSchema(ResultSetMetaData metaData, int i) throws SQLException {
+        switch (metaData.getColumnType(i)) {
+            case Types.BIT:
+            case Types.BOOLEAN:
+                return org.apache.avro.Schema.create(org.apache.avro.Schema.Type.BOOLEAN);
+            case Types.TINYINT:
+            case Types.SMALLINT:
+            case Types.INTEGER:
+                return org.apache.avro.Schema.create(org.apache.avro.Schema.Type.INT);
+            case Types.BIGINT:
+                return org.apache.avro.Schema.create(org.apache.avro.Schema.Type.LONG);
+            case Types.REAL:
+                return org.apache.avro.Schema.create(org.apache.avro.Schema.Type.FLOAT);
+            case Types.FLOAT:
+            case Types.DOUBLE:
+                return org.apache.avro.Schema.create(org.apache.avro.Schema.Type.DOUBLE);
+            case Types.DECIMAL:
+            case Types.NUMERIC: // inclut money / smallmoney
+                int precision = metaData.getPrecision(i);
+                int scale = Math.max(metaData.getScale(i), 0);
+                if (precision <= 0 || scale > precision) {
+                    return org.apache.avro.Schema.create(org.apache.avro.Schema.Type.STRING);
+                }
+                return LogicalTypes.decimal(precision, scale)
+                        .addToSchema(org.apache.avro.Schema.create(org.apache.avro.Schema.Type.BYTES));
+            case Types.DATE:
+                return LogicalTypes.date()
+                        .addToSchema(org.apache.avro.Schema.create(org.apache.avro.Schema.Type.INT));
+            case Types.TIMESTAMP: // datetime, smalldatetime, datetime2
+                return LogicalTypes.localTimestampMillis()
+                        .addToSchema(org.apache.avro.Schema.create(org.apache.avro.Schema.Type.LONG));
+            case Types.BINARY:
+            case Types.VARBINARY:
+            case Types.LONGVARBINARY: // varbinary, image, timestamp/rowversion
+                return org.apache.avro.Schema.create(org.apache.avro.Schema.Type.BYTES);
             default:
-                return "[\"null\", \"string\"]";
+                org.apache.avro.Schema string = org.apache.avro.Schema.create(org.apache.avro.Schema.Type.STRING);
+                // taille de la colonne source, pour recréer NVARCHAR(n) à l'import au lieu de NVARCHAR(MAX)
+                string.addProp(SQL_LENGTH_PROP, metaData.getPrecision(i));
+                return string;
         }
     }
 
+    // Propriété Avro portant la taille SQL d'une colonne texte
+    private static final String SQL_LENGTH_PROP = "sqlLength";
+    // Taille utilisée pour les fichiers produits avant l'ajout de sqlLength
+    private static final int DEFAULT_STRING_LENGTH = 4000;
+
+    // Taille NVARCHAR d'une colonne texte : 1..4000, ou -1 pour NVARCHAR(MAX).
+    // NVARCHAR(MAX) est envoyé par morceaux par le pilote et rend l'import environ 4 fois plus lent.
+    private static int stringLength(org.apache.avro.Schema schema) {
+        Object prop = schema.getObjectProp(SQL_LENGTH_PROP);
+        if (!(prop instanceof Number)) return DEFAULT_STRING_LENGTH;
+        int length = ((Number) prop).intValue();
+        return (length > 0 && length <= 4000) ? length : -1;
+    }
+
+    // Lit la colonne i du ResultSet et la convertit dans la représentation Avro du schéma donné
+    private static Object readAvroValue(ResultSet resultSet, int i, org.apache.avro.Schema schema) throws SQLException {
+        LogicalType logicalType = schema.getLogicalType();
+        if (logicalType instanceof LogicalTypes.Decimal) {
+            BigDecimal value = resultSet.getBigDecimal(i);
+            if (value == null) return null;
+            int scale = ((LogicalTypes.Decimal) logicalType).getScale();
+            return DECIMAL_CONVERSION.toBytes(value.setScale(scale, RoundingMode.HALF_UP), schema, logicalType);
+        }
+        if (logicalType instanceof LogicalTypes.Date) {
+            java.sql.Date value = resultSet.getDate(i);
+            return value == null ? null : (int) value.toLocalDate().toEpochDay();
+        }
+        if (logicalType instanceof LogicalTypes.LocalTimestampMillis) {
+            Timestamp value = resultSet.getTimestamp(i);
+            // Heure locale sans fuseau : restituée telle quelle quel que soit le fuseau du serveur cible
+            return value == null ? null : value.toLocalDateTime().toInstant(ZoneOffset.UTC).toEpochMilli();
+        }
+
+        Object value;
+        switch (schema.getType()) {
+            case BOOLEAN: value = resultSet.getBoolean(i); break;
+            case INT:     value = resultSet.getInt(i); break;
+            case LONG:    value = resultSet.getLong(i); break;
+            case FLOAT:   value = resultSet.getFloat(i); break;
+            case DOUBLE:  value = resultSet.getDouble(i); break;
+            case BYTES:
+                byte[] bytes = resultSet.getBytes(i);
+                return bytes == null ? null : ByteBuffer.wrap(bytes);
+            default:
+                return resultSet.getString(i);
+        }
+        return resultSet.wasNull() ? null : value;
+    }
 
     // Méthode principale pour écrire le résultat de la requête dans un fichier Avro
     public static void writeToFileAvro(String fileName, String query, Connection sqlCon) {
+        File file = new File(fileName.replace(".csv", ".avro"));
         try (Statement statement = sqlCon.createStatement();
              ResultSet resultSet = statement.executeQuery(query)) {
 
-            // Récupérer les métadonnées pour construire le schéma Avro
+            // Construire le schéma Avro à partir des métadonnées (toutes les colonnes sont nullables)
             ResultSetMetaData metaData = resultSet.getMetaData();
             int columnCount = metaData.getColumnCount();
-
-            StringBuilder schemaBuilder = new StringBuilder();
-            schemaBuilder.append("{\"type\":\"record\",\"name\":\"ResultSetRecord\",\"fields\":[");
+            org.apache.avro.Schema[] columnSchemas = new org.apache.avro.Schema[columnCount + 1];
+            List<org.apache.avro.Schema.Field> fields = new ArrayList<>();
 
             for (int i = 1; i <= columnCount; i++) {
-                String columnName = metaData.getColumnName(i);
-                String columnType = mapSQLTypeToAvroType(metaData.getColumnTypeName(i));
-                schemaBuilder.append("{\"name\":\"").append(columnName)
-                        .append("\",\"type\":").append(columnType)
-                        .append("}");
-                if (i < columnCount) {
-                    schemaBuilder.append(",");
-                }
+                columnSchemas[i] = mapSQLTypeToAvroSchema(metaData, i);
+                org.apache.avro.Schema nullable = org.apache.avro.Schema.createUnion(
+                        org.apache.avro.Schema.create(org.apache.avro.Schema.Type.NULL), columnSchemas[i]);
+                fields.add(new org.apache.avro.Schema.Field(metaData.getColumnLabel(i), nullable, null,
+                        org.apache.avro.Schema.Field.NULL_DEFAULT_VALUE));
             }
-            schemaBuilder.append("]}");
+            org.apache.avro.Schema schema = org.apache.avro.Schema.createRecord("ResultSetRecord", null, null, false, fields);
 
-            org.apache.avro.Schema schema = new org.apache.avro.Schema.Parser().parse(schemaBuilder.toString());
+            try (DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(new GenericDatumWriter<GenericRecord>(schema))) {
+                dataFileWriter.setCodec(CodecFactory.deflateCodec(6));
+                dataFileWriter.create(schema, file);
 
-            // Créer un Avro DataFileWriter
-            File file = new File(fileName.replace(".csv",".avro"));
-            DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(new GenericDatumWriter<GenericRecord>());
-            dataFileWriter.create(schema, file);
-
-            // Ecrire les résultats dans le fichier Avro
-            while (resultSet.next()) {
-                GenericRecord record = new GenericData.Record(schema);
-                for (int i = 1; i <= columnCount; i++) {
-                    Object value = resultSet.getObject(i);
-                    String columnName = metaData.getColumnName(i);
-
-                    if (value == null) {
-                        record.put(columnName, null);
-                    } else {
-                        // Récupération du type Avro attendu pour cette colonne
-                        String avroType = schema.getField(columnName).schema().getTypes().get(1).getType().getName();
-
-                        switch (avroType) {
-                            case "int":
-                                record.put(columnName, ((Number) value).intValue());
-                                break;
-                            case "long":
-                                record.put(columnName, ((Number) value).longValue());
-                                break;
-                            case "float":
-                                record.put(columnName, ((Number) value).floatValue());
-                                break;
-                            case "double":
-                                record.put(columnName, ((Number) value).doubleValue());
-                                break;
-                            case "boolean":
-                                record.put(columnName, value);
-                                break;
-                            case "string":
-                                record.put(columnName, value.toString());
-                                break;
-                            default:
-                                record.put(columnName, value.toString());
-                                break;
-                        }
+                while (resultSet.next()) {
+                    GenericRecord record = new GenericData.Record(schema);
+                    for (int i = 1; i <= columnCount; i++) {
+                        record.put(i - 1, readAvroValue(resultSet, i, columnSchemas[i]));
                     }
+                    dataFileWriter.append(record);
                 }
-                dataFileWriter.append(record);
             }
-
-            // Fermer le writer
-            dataFileWriter.close();
 
         } catch (Exception e) {
-            e.printStackTrace();
+            // Ne jamais laisser un fichier partiel qui serait envoyé puis importé
+            if (file.exists() && !file.delete()) {
+                System.err.println("Impossible de supprimer le fichier Avro incomplet : " + file);
+            }
+            throw new RuntimeException("Échec de l'export Avro vers " + file, e);
         }
     }
 
@@ -777,21 +977,34 @@ public class Table {
         }
     }
 
-    // Method to map Avro types to SQL Server types
-    private static String mapAvroTypeToSQLType(org.apache.avro.Schema schema) {
-        org.apache.avro.Schema.Type avroType = schema.getType();
-        if (avroType == org.apache.avro.Schema.Type.UNION) {
-            // If it's a union, find the non-null type
-            List<org.apache.avro.Schema> types = schema.getTypes();
-            for (org.apache.avro.Schema type : types) {
-                if (!type.getType().equals(org.apache.avro.Schema.Type.NULL)) {
-                    avroType = type.getType();
-                    break;
+    // Retourne le type non nul d'une union ["null", type]
+    private static org.apache.avro.Schema nonNullSchema(org.apache.avro.Schema schema) {
+        if (schema.getType() == org.apache.avro.Schema.Type.UNION) {
+            for (org.apache.avro.Schema type : schema.getTypes()) {
+                if (type.getType() != org.apache.avro.Schema.Type.NULL) {
+                    return type;
                 }
             }
         }
+        return schema;
+    }
 
-        switch (avroType) {
+    // Method to map Avro types to SQL Server types
+    private static String mapAvroTypeToSQLType(org.apache.avro.Schema schema) {
+        schema = nonNullSchema(schema);
+        LogicalType logicalType = schema.getLogicalType();
+        if (logicalType instanceof LogicalTypes.Decimal) {
+            LogicalTypes.Decimal decimal = (LogicalTypes.Decimal) logicalType;
+            return "DECIMAL(" + Math.min(decimal.getPrecision(), 38) + "," + decimal.getScale() + ")";
+        }
+        if (logicalType instanceof LogicalTypes.Date) {
+            return "DATE";
+        }
+        if (logicalType instanceof LogicalTypes.LocalTimestampMillis) {
+            return "DATETIME2(3)";
+        }
+
+        switch (schema.getType()) {
             case INT:
                 return "INT";
             case LONG:
@@ -802,52 +1015,71 @@ public class Table {
                 return "FLOAT";
             case BOOLEAN:
                 return "BIT";
-            case STRING:
-                return "NVARCHAR(MAX)";
             case BYTES:
                 return "VARBINARY(MAX)";
             default:
-                return "NVARCHAR(MAX)";
+                int length = stringLength(schema);
+                return length > 0 ? "NVARCHAR(" + length + ")" : "NVARCHAR(MAX)";
         }
     }
 
 
-    // Lire le fichier Avro et insérer les données dans la base de données
+    // Lire le fichier Avro et insérer les données dans la base de données.
+    // Tout se fait dans une transaction : en cas d'erreur la table cible revient à son état précédent.
     public static void insertAvroDataToSqlServer(String avroFilePath, String tableName, Connection conn) {
         File avroFile = new File(avroFilePath);
-        DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
+        if (!avroFile.exists()) {
+            System.out.println("Fichier Avro absent, import ignoré : " + avroFilePath);
+            return;
+        }
 
-        try (org.apache.avro.file.FileReader<GenericRecord> dataFileReader = DataFileReader.openReader(avroFile, datumReader)) {
-            // Get Avro schema
-            org.apache.avro.Schema schema = dataFileReader.getSchema();
+        boolean autoCommit = true;
+        try {
+            autoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
 
-            // Create table dynamically
-            createTableFromSchema(conn, schema, tableName);
+            try (org.apache.avro.file.FileReader<GenericRecord> dataFileReader =
+                         DataFileReader.openReader(avroFile, new GenericDatumReader<GenericRecord>())) {
+                org.apache.avro.Schema schema = dataFileReader.getSchema();
 
-            // Prepare insert query
-            String sqlInsertQuery = generateInsertQuery(schema, tableName);
-            try (PreparedStatement preparedStatement = conn.prepareStatement(sqlInsertQuery)) {
+                createTableFromSchema(conn, schema, tableName);
 
-                // Read each Avro record and insert into the database
-                while (dataFileReader.hasNext()) {
-                    GenericRecord record = dataFileReader.next();
-                    setPreparedStatementParameters(preparedStatement, record);
-                    preparedStatement.executeUpdate();
+                // Bulk copy (protocole BULK INSERT de SQL Server) : beaucoup plus rapide que des INSERT par lots
+                SQLServerBulkCopyOptions options = new SQLServerBulkCopyOptions();
+                options.setBatchSize(AVRO_BULK_BATCH_SIZE);
+                options.setBulkCopyTimeout(0);
+                options.setTableLock(true);
+                try (SQLServerBulkCopy bulkCopy = new SQLServerBulkCopy(conn)) {
+                    bulkCopy.setBulkCopyOptions(options);
+                    bulkCopy.setDestinationTableName("[" + tableName + "]");
+                    bulkCopy.writeToServer(new AvroBulkData(dataFileReader, schema));
                 }
             }
+            conn.commit();
 
         } catch (Exception e) {
-            e.printStackTrace();
+            try {
+                conn.rollback();
+            } catch (SQLException rollbackError) {
+                e.addSuppressed(rollbackError);
+            }
+            throw new RuntimeException("Échec de l'import Avro de " + avroFilePath + " dans " + tableName, e);
+        } finally {
+            try {
+                conn.setAutoCommit(autoCommit);
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
         }
     }
 
     // Method to create a SQL Server table from Avro schema
     private static void createTableFromSchema(Connection conn, org.apache.avro.Schema schema, String tableName) throws SQLException {
-        StringBuilder createTableQuery = new StringBuilder("DROP TABLE IF EXISTS ").append(tableName).append("; CREATE TABLE ");
-        createTableQuery.append(tableName).append(" (");
+        StringBuilder createTableQuery = new StringBuilder("DROP TABLE IF EXISTS [").append(tableName).append("]; CREATE TABLE [");
+        createTableQuery.append(tableName).append("] (");
 
         for (org.apache.avro.Schema.Field field : schema.getFields()) {
-            createTableQuery.append(field.name()).append(" ");
+            createTableQuery.append("[").append(field.name()).append("] ");
             createTableQuery.append(mapAvroTypeToSQLType(field.schema())).append(",");
         }
 
@@ -860,104 +1092,141 @@ public class Table {
         }
     }
 
-    // Method to generate the SQL insert query from Avro schema
-    private static String generateInsertQuery(org.apache.avro.Schema schema, String tableName) {
-        StringBuilder insertQuery = new StringBuilder("INSERT INTO ");
-        insertQuery.append(tableName).append(" (");
-
-        StringBuilder valuesPart = new StringBuilder(" VALUES (");
-
-        for (org.apache.avro.Schema.Field field : schema.getFields()) {
-            insertQuery.append(field.name()).append(",");
-            valuesPart.append("?,");
+    // Convertit une valeur Avro (schéma non nul) en valeur JDBC
+    private static Object toJdbcValue(Object value, org.apache.avro.Schema fieldSchema) {
+        if (value == null) return null;
+        LogicalType logicalType = fieldSchema.getLogicalType();
+        if (logicalType instanceof LogicalTypes.Decimal) {
+            return DECIMAL_CONVERSION.fromBytes(((ByteBuffer) value).duplicate(), fieldSchema, logicalType);
         }
-
-        // Remove the last comma
-        insertQuery.setLength(insertQuery.length() - 1);
-        valuesPart.setLength(valuesPart.length() - 1);
-
-        insertQuery.append(") ").append(valuesPart).append(");");
-        return insertQuery.toString();
-    }
-
-    // Method to set parameters for PreparedStatement from GenericRecord
-    private static void setPreparedStatementParameters(PreparedStatement preparedStatement, GenericRecord record) throws SQLException {
-        int index = 1;
-        for (org.apache.avro.Schema.Field field : record.getSchema().getFields()) {
-            Object value = record.get(field.name());
-            org.apache.avro.Schema fieldSchema = field.schema();
-            org.apache.avro.Schema.Type fieldType = fieldSchema.getType();
-
-            // Handle union types by finding the non-null type
-            if (fieldType == org.apache.avro.Schema.Type.UNION) {
-                List<org.apache.avro.Schema> types = fieldSchema.getTypes();
-                for (org.apache.avro.Schema type : types) {
-                    if (!type.getType().equals(org.apache.avro.Schema.Type.NULL)) {
-                        fieldType = type.getType();
-                        break;
-                    }
-                }
-            }
-
-            if (value == null) {
-                preparedStatement.setNull(index, getSqlType(fieldType));
-            } else {
-                switch (fieldType) {
-                    case INT:
-                        preparedStatement.setInt(index, (Integer) value);
-                        break;
-                    case LONG:
-                        preparedStatement.setLong(index, (Long) value);
-                        break;
-                    case FLOAT:
-                        preparedStatement.setFloat(index, (Float) value);
-                        break;
-                    case DOUBLE:
-                        preparedStatement.setDouble(index, (Double) value);
-                        break;
-                    case BOOLEAN:
-                        preparedStatement.setBoolean(index, (Boolean) value);
-                        break;
-                    case STRING:
-                        preparedStatement.setString(index, value.toString());
-                        break;
-                    case BYTES:
-                        preparedStatement.setBytes(index, (byte[]) value);
-                        break;
-                    default:
-                        preparedStatement.setObject(index, value.toString());
-                        break;
-                }
-            }
-            index++;
+        if (logicalType instanceof LogicalTypes.Date) {
+            return java.sql.Date.valueOf(LocalDate.ofEpochDay((Integer) value));
         }
-    }
-
-    // Helper method to get SQL type from Avro schema type
-    private static int getSqlType(org.apache.avro.Schema.Type avroType) {
-        switch (avroType) {
+        if (logicalType instanceof LogicalTypes.LocalTimestampMillis) {
+            long millis = (Long) value;
+            return Timestamp.valueOf(LocalDateTime.ofEpochSecond(Math.floorDiv(millis, 1000L),
+                    (int) Math.floorMod(millis, 1000L) * 1_000_000, ZoneOffset.UTC));
+        }
+        switch (fieldSchema.getType()) {
             case INT:
-                return java.sql.Types.INTEGER;
             case LONG:
-                return java.sql.Types.BIGINT;
             case FLOAT:
-                return java.sql.Types.FLOAT;
             case DOUBLE:
-                return java.sql.Types.DOUBLE;
             case BOOLEAN:
-                return java.sql.Types.BIT;
-            case STRING:
-                return java.sql.Types.NVARCHAR;
+                return value;
             case BYTES:
-                return java.sql.Types.VARBINARY;
+                ByteBuffer buffer = ((ByteBuffer) value).duplicate();
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.get(bytes);
+                return bytes;
             default:
-                return java.sql.Types.VARCHAR;
+                return value.toString();
+        }
+    }
+
+    // Source du bulk copy : lit les enregistrements du fichier Avro au fil de l'eau
+    private static final class AvroBulkData implements ISQLServerBulkData {
+        private final transient org.apache.avro.file.FileReader<GenericRecord> reader;
+        private final transient org.apache.avro.Schema[] fieldSchemas;
+        private final String[] names;
+        private final int[] types;
+        private final int[] precisions;
+        private final int[] scales;
+        private final Set<Integer> ordinals = new LinkedHashSet<>();
+        private transient GenericRecord record;
+
+        AvroBulkData(org.apache.avro.file.FileReader<GenericRecord> reader, org.apache.avro.Schema schema) {
+            this.reader = reader;
+            List<org.apache.avro.Schema.Field> fields = schema.getFields();
+            int n = fields.size();
+            fieldSchemas = new org.apache.avro.Schema[n];
+            names = new String[n];
+            types = new int[n];
+            precisions = new int[n];
+            scales = new int[n];
+            for (int i = 0; i < n; i++) {
+                org.apache.avro.Schema fieldSchema = nonNullSchema(fields.get(i).schema());
+                fieldSchemas[i] = fieldSchema;
+                names[i] = fields.get(i).name();
+                types[i] = getSqlType(fieldSchema);
+                LogicalType logicalType = fieldSchema.getLogicalType();
+                if (logicalType instanceof LogicalTypes.Decimal) {
+                    precisions[i] = ((LogicalTypes.Decimal) logicalType).getPrecision();
+                    scales[i] = ((LogicalTypes.Decimal) logicalType).getScale();
+                } else if (types[i] == Types.TIMESTAMP) {
+                    precisions[i] = 23;
+                    scales[i] = 3;
+                } else if (types[i] == Types.NVARCHAR || types[i] == Types.VARCHAR) {
+                    int length = stringLength(fieldSchema);
+                    precisions[i] = length > 0 ? length : Integer.MAX_VALUE;
+                } else {
+                    precisions[i] = types[i] == Types.VARBINARY ? Integer.MAX_VALUE : 0;
+                }
+                ordinals.add(i + 1);
+            }
+        }
+
+        @Override public Set<Integer> getColumnOrdinals() { return ordinals; }
+        @Override public String getColumnName(int column) { return names[column - 1]; }
+        @Override public int getColumnType(int column) { return types[column - 1]; }
+        @Override public int getPrecision(int column) { return precisions[column - 1]; }
+        @Override public int getScale(int column) { return scales[column - 1]; }
+
+        @Override
+        public boolean next() throws SQLException {
+            if (!reader.hasNext()) return false;
+            try {
+                record = reader.next(record);
+            } catch (IOException e) {
+                throw new SQLException("Lecture Avro impossible", e);
+            }
+            return true;
+        }
+
+        @Override
+        public Object[] getRowData() {
+            Object[] row = new Object[names.length];
+            for (int i = 0; i < row.length; i++) {
+                row[i] = toJdbcValue(record.get(i), fieldSchemas[i]);
+            }
+            return row;
+        }
+    }
+
+    // Helper method to get SQL type from Avro schema (non nul)
+    private static int getSqlType(org.apache.avro.Schema schema) {
+        LogicalType logicalType = schema.getLogicalType();
+        if (logicalType instanceof LogicalTypes.Decimal) return Types.DECIMAL;
+        if (logicalType instanceof LogicalTypes.Date) return Types.DATE;
+        if (logicalType instanceof LogicalTypes.LocalTimestampMillis) return Types.TIMESTAMP;
+
+        switch (schema.getType()) {
+            case INT:
+                return Types.INTEGER;
+            case LONG:
+                return Types.BIGINT;
+            case FLOAT:
+                return Types.REAL;
+            case DOUBLE:
+                return Types.DOUBLE;
+            case BOOLEAN:
+                return Types.BIT;
+            case STRING:
+                return Types.NVARCHAR;
+            case BYTES:
+                return Types.VARBINARY;
+            default:
+                return Types.VARCHAR;
         }
     }
 
     public static void readOnFile(String path,String fileInfo,String table,Connection sqlCon)
     {
-
+        // Seuls les fichiers Avro sont importés (un éventuel .csv ancien format est ignoré)
+        if (!fileInfo.endsWith(".avro")) {
+            System.out.println("Fichier non Avro ignoré : " + fileInfo);
+            return;
+        }
         insertAvroDataToSqlServer(path.concat("\\").concat(fileInfo),table,sqlCon);
         /*
         String sql;
@@ -1106,7 +1375,8 @@ public class Table {
                 DECLARE @configTable AS VARCHAR(100) = '%s';
                 DECLARE @keyColumn AS VARCHAR(250) = '%s';
 
-                SELECT @MonSQL = ' INSERT INTO config.'+@configTable+' SELECT '+@keyColumn+',cbMarq,GETDATE() FROM ( SELECT DISTINCT '+@keyColumn+',cbMarq FROM '+@TableName
+                -- colonnes nommées : une colonne ajoutée plus tard (ALTER TABLE) se retrouve en fin de table
+                SELECT @MonSQL = ' INSERT INTO config.'+@configTable+' ('+@keyColumn+',cbMarq,DateCreation) SELECT '+@keyColumn+',cbMarq,GETDATE() FROM ( SELECT DISTINCT '+@keyColumn+',cbMarq FROM '+@TableName
                 +' EXCEPT SELECT '+@keyColumn+',cbMarq FROM config.'+@configTable + ')A'
                 EXEC (@MonSQL)
 

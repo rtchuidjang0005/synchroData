@@ -14,14 +14,15 @@ public class ReglEch extends Table {
         return """
                 BEGIN TRY  SET DATEFORMAT ymd;
                  IF OBJECT_ID('F_REGLECH_DEST') IS NOT NULL
-                INSERT INTO F_REGLECH (
-                [RG_No],[DR_No],[DO_Domaine],[DO_Type]
-                        ,[DO_Piece],[RC_Montant],[RG_TypeReg],[cbProt],[cbCreateur]
-                        ,[cbModification],[cbReplication],[cbFlag],cbMarqSource,DataBaseSource,DR_NoSource,RG_NoSource)
+                BEGIN
+                IF OBJECT_ID('tempdb..#ReglEch') IS NOT NULL
+                    DROP TABLE #ReglEch
 
                 SELECT     cre.[RG_No],fdr.[DR_No],dest.[DO_Domaine],dest.[DO_Type]
                         ,dest.[DO_Piece],dest.[RC_Montant],dest.[RG_TypeReg],dest.[cbProt],dest.[cbCreateur]
-                        ,dest.[cbModification],dest.[cbReplication],dest.[cbFlag],dest.cbMarqSource,dest.DataBaseSource,dest.DR_No,dest.RG_No
+                        ,dest.[cbModification],dest.[cbReplication],dest.[cbFlag],dest.cbMarqSource,dest.DataBaseSource
+                        ,[DR_NoSource] = dest.DR_No,[RG_NoSource] = dest.RG_No
+                INTO #ReglEch
                 FROM F_REGLECH_DEST dest
                 LEFT JOIN (SELECT DataBaseSource,cbMarqSource FROM F_REGLECH) src
                     ON    ISNULL(dest.DataBaseSource,'') = ISNULL(src.DataBaseSource,'')
@@ -34,6 +35,18 @@ public class ReglEch extends Table {
                     AND ISNULL(cre.RG_NoSource,0) = ISNULL(dest.RG_No,0)
                 WHERE src.cbMarqSource IS NULL
                 AND cre.RG_No IS NOT NULL AND fdr.DR_No IS NOT NULL
+
+                {{FK_CHECK}}
+
+                INSERT INTO F_REGLECH (
+                [RG_No],[DR_No],[DO_Domaine],[DO_Type]
+                        ,[DO_Piece],[RC_Montant],[RG_TypeReg],[cbProt],[cbCreateur]
+                        ,[cbModification],[cbReplication],[cbFlag],cbMarqSource,DataBaseSource,DR_NoSource,RG_NoSource)
+                SELECT [RG_No],[DR_No],[DO_Domaine],[DO_Type]
+                        ,[DO_Piece],[RC_Montant],[RG_TypeReg],[cbProt],[cbCreateur]
+                        ,[cbModification],[cbReplication],[cbFlag],cbMarqSource,DataBaseSource,DR_NoSource,RG_NoSource
+                FROM #ReglEch
+                END
 
                 INSERT INTO config.DB_Errors(
                           UserName,
@@ -76,7 +89,13 @@ public class ReglEch extends Table {
                    'F_REGLECH',
                    GETDATE());
                 END CATCH\
-                """.formatted(filename, filename);
+                """.formatted(filename, filename)
+                .replace("{{FK_CHECK}}", foreignKeyCheck(tableName, "#ReglEch",
+                        "N'Domaine : ' + CAST(t.DO_Domaine AS NVARCHAR(10)) + N' Type : ' + CAST(t.DO_Type AS NVARCHAR(10))"
+                                + " + N' Piece : ' + t.DO_Piece + N' RG_No source : ' + CAST(t.RG_NoSource AS NVARCHAR(20))"
+                                + " + N' DR_No source : ' + CAST(t.DR_NoSource AS NVARCHAR(20))"
+                                + " + N' cbMarq : ' + CAST(t.cbMarqSource AS NVARCHAR(20)) + N' database : ' + ISNULL(t.DataBaseSource, N'')",
+                        filename));
     }
 
     public static void sendDataElement(Connection sqlCon, String path,String database,int unibase)
@@ -95,6 +114,7 @@ public class ReglEch extends Table {
             for (String filename : children) {
                 disableTrigger(sqlCon,tableName);
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
+                executeQuery(sqlCon, renameExistingPieceLink(tableName + "_DEST"));
                 updateTableDest(sqlCon, "", "'RG_No','DR_No'", tableName, tableName + "_DEST",filename,unibase);
                 sendData(sqlCon, path, filename, insert(filename));
             //    deleteTempTable(sqlCon, tableName+"_DEST");

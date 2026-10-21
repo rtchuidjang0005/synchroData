@@ -42,15 +42,15 @@ public class DocRegl extends Table {
                     AND    ISNULL(src.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'')
 
                  IF OBJECT_ID('F_DOCREGL_DEST') IS NOT NULL
-                INSERT INTO F_DOCREGL (
-                [DR_No],[DO_Domaine],[DO_Type],[DO_Piece],[DR_TypeRegl],[DR_Date]
-                        ,[DR_Libelle],[DR_Pourcent],[DR_Montant],[DR_MontantDev],[DR_Equil],[EC_No],[DR_Regle]
-                        ,[N_Reglement],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource,DataBaseSource,DR_NoSource)
+                BEGIN
+                IF OBJECT_ID('tempdb..#DocRegl') IS NOT NULL
+                    DROP TABLE #DocRegl
 
-                SELECT     ISNULL((SELECT Max(DR_No) FROM F_DOCREGL),0) + ROW_NUMBER() OVER(ORDER BY dest.DR_No)
+                SELECT     [DR_No] = ISNULL((SELECT Max(DR_No) FROM F_DOCREGL),0) + ROW_NUMBER() OVER(ORDER BY dest.DR_No)
                         ,dest.[DO_Domaine],dest.[DO_Type],dest.[DO_Piece],[DR_TypeRegl],[DR_Date]
                         ,[DR_Libelle],[DR_Pourcent],[DR_Montant],[DR_MontantDev],[DR_Equil],[EC_No],[DR_Regle]
-                        ,[N_Reglement],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],dest.cbMarqSource,dest.[dataBaseSource],dest.DR_No
+                        ,[N_Reglement],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],dest.cbMarqSource,[DataBaseSource] = dest.[dataBaseSource],[DR_NoSource] = dest.DR_No
+                INTO #DocRegl
                 FROM F_DOCREGL_DEST dest
                 LEFT JOIN (SELECT cbMarqSource,DataBaseSource FROM F_DOCREGL) src
                     ON    ISNULL(dest.cbMarqSource,0) = ISNULL(src.cbMarqSource,0)
@@ -61,6 +61,18 @@ public class DocRegl extends Table {
                 AND docE.DO_Piece = dest.DO_Piece
                 WHERE src.cbMarqSource IS NULL
                 AND docE.DO_Piece IS NOT NULL
+
+                {{FK_CHECK}}
+
+                INSERT INTO F_DOCREGL (
+                [DR_No],[DO_Domaine],[DO_Type],[DO_Piece],[DR_TypeRegl],[DR_Date]
+                        ,[DR_Libelle],[DR_Pourcent],[DR_Montant],[DR_MontantDev],[DR_Equil],[EC_No],[DR_Regle]
+                        ,[N_Reglement],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource,DataBaseSource,DR_NoSource)
+                SELECT [DR_No],[DO_Domaine],[DO_Type],[DO_Piece],[DR_TypeRegl],[DR_Date]
+                        ,[DR_Libelle],[DR_Pourcent],[DR_Montant],[DR_MontantDev],[DR_Equil],[EC_No],[DR_Regle]
+                        ,[N_Reglement],[cbProt],[cbCreateur],[cbModification],[cbReplication],[cbFlag],cbMarqSource,DataBaseSource,DR_NoSource
+                FROM #DocRegl
+                END
 
                 INSERT INTO config.DB_Errors(
                           UserName,
@@ -100,7 +112,12 @@ public class DocRegl extends Table {
                    'F_DOCREGL',
                    GETDATE());
                 END CATCH\
-                """.formatted(filename, filename);
+                """.formatted(filename, filename)
+                .replace("{{FK_CHECK}}", foreignKeyCheck(tableName, "#DocRegl",
+                        "N'Domaine : ' + CAST(t.DO_Domaine AS NVARCHAR(10)) + N' Type : ' + CAST(t.DO_Type AS NVARCHAR(10))"
+                                + " + N' Piece : ' + t.DO_Piece + N' DR_No source : ' + CAST(t.DR_NoSource AS NVARCHAR(20))"
+                                + " + N' cbMarq : ' + CAST(t.cbMarqSource AS NVARCHAR(20)) + N' database : ' + ISNULL(t.DataBaseSource, N'')",
+                        filename));
     }
     public static void sendDataElement(Connection sqlCon, String path,String database,int unibase)
     {
@@ -118,6 +135,7 @@ public class DocRegl extends Table {
             for (String filename : children){
                 disableTrigger(sqlCon,tableName);
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
+                executeQuery(sqlCon, renameExistingPieceLink(tableName + "_DEST"));
                 updateTableDest(sqlCon, "", "'DR_No'", tableName, tableName + "_DEST",filename,unibase);
                 sendData(sqlCon, path, filename, applyUpdateFlag(insert(filename), tableName));
                // deleteTempTable(sqlCon, tableName+"_DEST");

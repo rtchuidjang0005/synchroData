@@ -67,19 +67,26 @@ public class Article extends Table {
                 """.formatted(filename);
     }
 
+    // Renseigne les liens laissés à null par l'insertion. Si la mise à jour des existants est désactivée
+    // pour la table, seules les valeurs vides sont complétées (les articles déjà présents ne sont pas écrasés).
     public static void linkArticle(Connection sqlCon)
     {
+        boolean updateArticle = isUpdateEnabled(tableName);
+        boolean updateRessource = isUpdateEnabled("F_RESSOURCEPROD");
         String query = """
                 UPDATE F_ARTICLE
-                     SET CO_No = F_ARTICLE_DEST.CO_No
-                         , RP_CodeDefaut = F_ARTICLE_DEST.RP_CodeDefaut
+                     SET CO_No = %s
+                         , RP_CodeDefaut = %s
                  FROM F_ARTICLE_DEST
                  WHERE F_ARTICLE_DEST.AR_Ref = F_ARTICLE.AR_Ref
                  UPDATE F_RESSOURCEPROD
-                     SET AR_RefDefaut = F_RESSOURCEPROD_DEST.AR_RefDefaut
+                     SET AR_RefDefaut = %s
                  FROM F_RESSOURCEPROD_DEST
                  WHERE F_RESSOURCEPROD_DEST.RP_Code = F_RESSOURCEPROD.RP_Code\
-                """;
+                """.formatted(
+                updateArticle ? "F_ARTICLE_DEST.CO_No" : "ISNULL(F_ARTICLE.CO_No, F_ARTICLE_DEST.CO_No)",
+                updateArticle ? "F_ARTICLE_DEST.RP_CodeDefaut" : "ISNULL(F_ARTICLE.RP_CodeDefaut, F_ARTICLE_DEST.RP_CodeDefaut)",
+                updateRessource ? "F_RESSOURCEPROD_DEST.AR_RefDefaut" : "ISNULL(F_RESSOURCEPROD.AR_RefDefaut, F_RESSOURCEPROD_DEST.AR_RefDefaut)");
         executeQuery(sqlCon, query);
     }
 

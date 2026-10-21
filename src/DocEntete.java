@@ -17,6 +17,22 @@ public class DocEntete extends Table {
                                  BEGIN
                                  IF OBJECT_ID('tempdb..#DocEntete') IS NOT NULL
                                      DROP TABLE #DocEntete
+                                 -- Pièces non reprises : le numéro existe déjà pour un autre document (autre base ou document local)
+                                 INSERT INTO config.DB_Errors
+                                 SELECT SUSER_SNAME(), NULL, NULL, NULL, NULL, NULL
+                                      , 'Pièce déjà existante, document non repris'
+                                      , 'Domaine : ' + CAST(dest.DO_Domaine AS NVARCHAR(10)) + ' Type : ' + CAST(dest.DO_Type AS NVARCHAR(10))
+                                        + ' Piece : ' + dest.DO_Piece + ' cbMarq : ' + CAST(dest.cbMarqSource AS NVARCHAR(20))
+                                        + ' database : ' + ISNULL(dest.DataBaseSource,'') + ' existant : ' + ISNULL(src.DataBaseSource,'(local)')
+                                        + ' fileName : %s'
+                                      , 'F_DOCENTETE', GETDATE()
+                                 FROM F_DOCENTETE_DEST dest
+                                 INNER JOIN F_DOCENTETE src
+                                 ON dest.DO_Piece = src.DO_Piece
+                                 AND dest.DO_Domaine = src.DO_Domaine
+                                 AND dest.DO_Type = src.DO_Type
+                                 WHERE NOT (ISNULL(src.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'')
+                                            AND ISNULL(src.cbMarqSource,0) = ISNULL(dest.cbMarqSource,0))
                                  SELECT dest.[DO_Domaine], dest.[DO_Type], dest.[DO_Date],[DO_Ref] = LEFT(dest.[DO_Ref],17)
                                  , dest.[DO_Tiers], dest.[CO_No], dest.[DO_Period], dest.[DO_Devise]
                                  , dest.[DO_Cours]
@@ -48,8 +64,11 @@ public class DocEntete extends Table {
                                  AND dest.DO_Type = src.DO_Type
                                  LEFT JOIN F_DEPOT dep ON ISNULL(dep.DE_NoSource,0) = ISNULL(dest.DE_No,0) AND ISNULL(dep.dataBaseSource,'') = ISNULL(dest.dataBaseSource,'')
                                  LEFT JOIN F_CAISSE cai ON ISNULL(cai.CA_NoSource,0) = ISNULL(dest.CA_No,0) AND ISNULL(cai.dataBaseSource,'') = ISNULL(dest.dataBaseSource,'')
+                                 -- une adresse de livraison appartient à un tiers : évite de dupliquer le document si LI_NoSource est en double
                                  LEFT JOIN F_LIVRAISON liv ON ISNULL(liv.LI_NoSource,0) = ISNULL(dest.LI_No,0) AND ISNULL(liv.dataBaseSource,'') = ISNULL(dest.dataBaseSource,'')
+                                 AND liv.CT_Num = dest.DO_Tiers
                                  WHERE src.DO_Domaine IS NULL
+                                 {{FK_CHECK}}
                                  IF {{UPDATE_ENABLED}} = 1
                                  UPDATE dwh
                                     SET [DO_Domaine] = tmp.DO_Domaine
@@ -198,7 +217,12 @@ public class DocEntete extends Table {
                    'F_DOCENTETE',
                    GETDATE());
                 END CATCH\
-                """.formatted(filename);
+                """.formatted(filename, filename)
+                .replace("{{FK_CHECK}}", foreignKeyCheck(tableName, "#DocEntete",
+                        "N'Domaine : ' + CAST(t.DO_Domaine AS NVARCHAR(10)) + N' Type : ' + CAST(t.DO_Type AS NVARCHAR(10))"
+                                + " + N' Piece : ' + t.DO_Piece + N' cbMarq : ' + CAST(t.cbMarqSource AS NVARCHAR(20))"
+                                + " + N' database : ' + ISNULL(t.DataBaseSource, N'')",
+                        filename));
     }
     public static void sendDataElement(Connection sqlCon, String path,String database,int unibase)
     {
@@ -214,6 +238,7 @@ public class DocEntete extends Table {
         } else {
             for (String filename : children) {
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
+                executeQuery(sqlCon, renameExistingPieceEntete(filename));
                 disableTrigger(sqlCon,tableName);
 //                executeQuery(sqlCon, updateTableDest("", "'DO_Domaine','DO_Type','DO_Piece','DataBaseSource','cbMarqSource'", tableName, tableName + "_DEST",filename));
                 sendData(sqlCon, path, filename, applyUpdateFlag(insert(filename), tableName));
@@ -290,6 +315,7 @@ public class DocEntete extends Table {
                         BEGIN
                             DISABLE TRIGGER dbo.TG_DEL_F_DOCENTETE ON [dbo].[F_DOCENTETE];
                         END
+""" + renameExistingPieceLink("F_DOCENTETE_SUPPR") + """
                          DELETE FROM F_DOCENTETE
                          WHERE EXISTS (SELECT 1
                                FROM F_DOCENTETE_SUPPR

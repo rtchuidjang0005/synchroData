@@ -11,7 +11,7 @@ public class DocLigne extends Table {
 
     public static String insert(String filename)
     {
-        return  """
+        return  ("""
                 BEGIN TRY  SET DATEFORMAT ymd;
                  IF OBJECT_ID('F_DOCLIGNE_DEST') IS NOT NULL
                 BEGIN
@@ -46,11 +46,14 @@ public class DocLigne extends Table {
                        INTO #DocLigne
                  FROM F_DOCLIGNE_DEST dest
                  LEFT JOIN (SELECT cbMarqSource,dataBaseSource,DO_Piece,DO_Type,DO_Domaine FROM F_DOCLIGNE) src
-                  ON ISNULL(dest.cbMarqSource,0) = ISNULL(src.cbMarqSource,0)
-                  AND ISNULL(dest.dataBaseSource,'') = ISNULL(src.dataBaseSource,'')
+                  -- égalité simple (sans ISNULL) pour utiliser l'index IX_F_DOCLIGNE_SOURCE
+                  ON dest.cbMarqSource = src.cbMarqSource
+                  AND dest.dataBaseSource = src.dataBaseSource
                  LEFT JOIN (SELECT DE_NoSource,dataBaseSource,DE_No FROM F_DEPOT) dsrc
                   ON ISNULL(dsrc.DE_NoSource,0) = ISNULL(dest.DE_No,0)
                   AND ISNULL(dsrc.dataBaseSource,'') = ISNULL(dest.dataBaseSource,'')
+
+                {{FK_CHECK}}
 
                 INSERT INTO F_DOCLIGNE (
                 [DO_Domaine],[DO_Type],[CT_Num],[DO_Piece],[DL_PieceBC],[DL_PieceBL],[DO_Date],[DL_DateBC],[DL_DateBL],[DL_Ligne],[DO_Ref],[DL_TNomencl]
@@ -117,7 +120,12 @@ public class DocLigne extends Table {
                            'F_DOCLIGNE',
                            GETDATE());
                         END CATCH\
-                        """.formatted(filename, filename);
+                        """.formatted(filename, filename))
+                .replace("{{FK_CHECK}}", foreignKeyCheck(tableName, "#DocLigne",
+                        "N'Domaine : ' + CAST(t.DO_Domaine AS NVARCHAR(10)) + N' Type : ' + CAST(t.DO_Type AS NVARCHAR(10))"
+                                + " + N' Piece : ' + t.DO_Piece + N' Ligne : ' + CAST(t.DL_Ligne AS NVARCHAR(20))"
+                                + " + N' cbMarq : ' + CAST(t.cbMarqSource AS NVARCHAR(20)) + N' database : ' + ISNULL(t.DataBaseSource, N'')",
+                        filename));
     }
     public static void sendDataElement(Connection sqlCon, String path,String database,int unibase)
     {
@@ -134,6 +142,7 @@ public class DocLigne extends Table {
             for (String filename : children){
                 disableTrigger(sqlCon,tableName);
                 readOnFile(path, filename, tableName + "_DEST", sqlCon);
+                executeQuery(sqlCon, renameExistingPieceLink(tableName + "_DEST"));
                 if (isUpdateEnabled(tableName))
                     executeQuery(sqlCon, updateDocLigne(filename));
                 sendData(sqlCon, path, filename, insert(filename));
@@ -181,8 +190,9 @@ public class DocLigne extends Table {
                        INTO #DocLigne
                  FROM F_DOCLIGNE_DEST dest
                  LEFT JOIN (SELECT cbMarqSource,dataBaseSource,DO_Piece,DO_Type,DO_Domaine FROM F_DOCLIGNE) src
-                  ON ISNULL(dest.cbMarqSource,0) = ISNULL(src.cbMarqSource,0)
-                  AND ISNULL(dest.dataBaseSource,'') = ISNULL(src.dataBaseSource,'')
+                  -- égalité simple (sans ISNULL) pour utiliser l'index IX_F_DOCLIGNE_SOURCE
+                  ON dest.cbMarqSource = src.cbMarqSource
+                  AND dest.dataBaseSource = src.dataBaseSource
                  LEFT JOIN (SELECT DE_NoSource,dataBaseSource,DE_No FROM F_DEPOT) dsrc
                   ON ISNULL(dsrc.DE_NoSource,0) = ISNULL(dest.DE_No,0)
                   AND ISNULL(dsrc.dataBaseSource,'') = ISNULL(dest.dataBaseSource,'')
@@ -282,8 +292,8 @@ public class DocLigne extends Table {
                                     ,USERGESCOM = docL.USERGESCOM
                                     ,MACHINEPC = docL.MACHINEPC
                         FROM F_DOCLIGNE doc
-                                INNER JOIN #DocLigne docL ON ISNULL(doc.cbMarqSource,0) = ISNULL(docL.cbMarqSource,0)
-                        AND ISNULL(doc.[DataBaseSource],'') = ISNULL(docL.[DataBaseSource],'')
+                                INNER JOIN #DocLigne docL ON doc.cbMarqSource = docL.cbMarqSource
+                        AND doc.[DataBaseSource] = docL.[DataBaseSource]
 
                                 INSERT INTO config.DB_Errors (
                                     UserName
@@ -308,8 +318,8 @@ public class DocLigne extends Table {
                                     ,'Update F_DOCLIGNE'
                                     ,GETDATE()
                                 FROM F_DOCLIGNE_DEST dest
-                                INNER JOIN F_DOCLIGNE docL ON ISNULL(docL.cbMarqSource,0) = ISNULL(dest.cbMarqSource,0)
-                                    AND ISNULL(docL.DataBaseSource,'') = ISNULL(dest.DataBaseSource,'')
+                                INNER JOIN F_DOCLIGNE docL ON docL.cbMarqSource = dest.cbMarqSource
+                                    AND docL.DataBaseSource = dest.DataBaseSource
                         LEFT JOIN (SELECT DE_NoSource,dataBaseSource,DE_No FROM F_DEPOT) dsrc
                         ON    ISNULL(dsrc.DE_NoSource,0) = ISNULL(dest.DE_No,0)
                         AND    ISNULL(dsrc.dataBaseSource,'') = ISNULL(dest.dataBaseSource,'')
@@ -374,7 +384,7 @@ public class DocLigne extends Table {
         return
                 """
                          DELETE FROM F_DOCLIGNE
-                         WHERE EXISTS (SELECT 1                FROM F_DOCLIGNE_SUPPR                WHERE ISNULL(F_DOCLIGNE.cbMarqSource,0) = ISNULL(F_DOCLIGNE_SUPPR.cbMarq,0)                AND ISNULL(F_DOCLIGNE.DataBaseSource,'') = ISNULL(F_DOCLIGNE_SUPPR.DataBaseSource,''))
+                         WHERE EXISTS (SELECT 1                FROM F_DOCLIGNE_SUPPR                WHERE F_DOCLIGNE.cbMarqSource = F_DOCLIGNE_SUPPR.cbMarq                AND F_DOCLIGNE.DataBaseSource = F_DOCLIGNE_SUPPR.DataBaseSource)
                         """
                 ;
 

@@ -966,3 +966,9 @@ IF COL_LENGTH('F_DOCLIGNE','cbMarqPL') IS NULL
 BEGIN
     ALTER TABLE F_DOCLIGNE ADD cbMarqPL NUMERIC(23,6)
 END
+GO
+-- Index de synchronisation : retrouve une ligne reçue par sa base source et son cbMarq d'origine
+IF COL_LENGTH('F_DOCLIGNE','DataBaseSource') IS NOT NULL AND COL_LENGTH('F_DOCLIGNE','cbMarqSource') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_F_DOCLIGNE_SOURCE' AND object_id = OBJECT_ID('F_DOCLIGNE'))
+    CREATE NONCLUSTERED INDEX IX_F_DOCLIGNE_SOURCE ON F_DOCLIGNE (DataBaseSource, cbMarqSource)
+GO

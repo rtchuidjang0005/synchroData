@@ -45,6 +45,7 @@ public class Reglement extends Table {
                 ON ISNULL(dest.RG_No,0) = ISNULL(src.RG_NoSource,0)
                 AND ISNULL(dest.dataBaseSource,'') = ISNULL(src.dataBaseSource,'')
                 LEFT JOIN F_CAISSE cai ON ISNULL(cai.CA_NoSource,0) = ISNULL(dest.CA_No,0) AND ISNULL(cai.dataBaseSource,'') = ISNULL(dest.dataBaseSource,'')
+                {{FK_CHECK}}
                  IF OBJECT_ID('F_CREGLEMENT_DEST') IS NOT NULL AND {{UPDATE_ENABLED}} = 1
                 UPDATE cre
                    SET [CT_NumPayeur] = cre.CT_NumPayeur
@@ -120,7 +121,11 @@ public class Reglement extends Table {
                    'F_REGLEMENT',
                    GETDATE());
                 END CATCH\
-                """.formatted(filename);
+                """.formatted(filename)
+                .replace("{{FK_CHECK}}", foreignKeyCheck(tableName, "#reglement",
+                        "N'RG_No source : ' + CAST(t.RG_NoSource AS NVARCHAR(20)) + N' Piece : ' + ISNULL(t.RG_Piece, N'')"
+                                + " + N' cbMarq : ' + CAST(t.cbMarqSource AS NVARCHAR(20)) + N' database : ' + ISNULL(t.DataBaseSource, N'')",
+                        filename));
     }
 
     public static void sendDataElement(Connection sqlCon, String path,String database,int unibase)

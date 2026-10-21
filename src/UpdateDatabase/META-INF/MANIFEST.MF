@@ -1,5 +1,0 @@
-Manifest-Version: 1.0
-Main-Class: UpdateDatabase
-Class-Path: jsch-0.1.55.jar mssql-jdbc-8.2.2.jre8.jar opencsv-5.2.jar js
- on-simple-1.1.1.jar
-

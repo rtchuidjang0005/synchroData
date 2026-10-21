@@ -117,7 +117,6 @@ public class EcritureA extends Table {
                 ";";
 
         writeToFileAvro(path + "\\deleteList" + file, query, sqlCon);
-        writeOnFile(path + "\\deleteList" + file, query, sqlCon);
 
         query = " DELETE FROM config.ListEcritureA " +
                 " WHERE NOT EXISTS(SELECT   1 " +

@@ -36,23 +36,25 @@ public class SendFileFTP {
                         File dir = new File((String) list.get("path"));
 
                         File[] directoryListing = dir.listFiles();
-                        try {
-                            sftpChannel.mkdir((String) list.get("folderftp"));
-                        } catch (SftpException e) {
-                            System.out.println(e.id); // Prints "Failure"
-                            System.out.println(e.getMessage()); // Prints "null"
-                            assert (e.id == ChannelSftp.SSH_FX_FAILURE);
-                            assert (e.id == 4);
-                        }
-                        File backup = new File(list.get("path") + "/archive");
-                        if (directoryListing != null) {
-                            for (File child : directoryListing) {
-                                if (child.isFile()) {
-                                    sftpChannel.put(child.getAbsolutePath(), "/" + list.get("folderftp") + "/" + child.getName());
+                        // folderftp peut contenir plusieurs dossiers séparés par ";" (un par client)
+                        for (String folder : ((String) list.get("folderftp")).split(";")) {
+                            folder = folder.trim();
+                            if (folder.isEmpty())
+                                continue;
+                            try {
+                                sftpChannel.mkdir(folder);
+                            } catch (SftpException e) {
+                                // dossier déjà existant
+                            }
+                            if (directoryListing != null) {
+                                for (File child : directoryListing) {
+                                    if (child.isFile()) {
+                                        sftpChannel.put(child.getAbsolutePath(), "/" + folder + "/" + child.getName());
+                                    }
                                 }
-                                // Do something with child
                             }
                         }
+                        File backup = new File(list.get("path") + "/archive");
                         if (!backup.isDirectory())
                             backup.mkdir();
                         if (directoryListing != null) {

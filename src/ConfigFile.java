@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class ConfigFile {
@@ -26,8 +27,9 @@ public class ConfigFile {
     private JCheckBox factureDAchatCheckBox, documentDEntréeCheckBox, documentDeSortieCheckBox, documentDeTransfertCheckBox;
     private JCheckBox documentInterne1CheckBox, documentInterne2CheckBox, venteCheckBox, stockCheckBox, SrcJournauxCheckBox;
     private JCheckBox SrcCollaborateurCheckBox, EnvoiCheckBox, ReceptionCheckBox, ActiveCheckBox;
-    private JTextField SrcServerName, SrcBaseDeDonnees, SrcLogin, SrcMotDePasse, SrcRepertoire, dossierFTPSource, codeAgence, SrcNomConfig;
+    private JTextField SrcServerName, SrcLogin, SrcMotDePasse, SrcRepertoire, dossierFTPSource, codeAgence, SrcNomConfig;
     private JComboBox<ComboItem> SrcListConfig;
+    private JComboBox<String> SrcBaseDeDonnees;
     private JButton validerButton, SrcAjoutConfig;
     private JFormattedTextField dateMajConfig;
     private JScrollPane panelScroll;
@@ -38,15 +40,35 @@ public class ConfigFile {
     private ComboItem comboItem;
     private boolean newItem;
     private boolean focusOutName;
+    private boolean loadingDatabase;
 
     private final Map<String, JCheckBox> checkBoxMap = new HashMap<>();
 
+    // Tables reçues : cochée = met à jour un enregistrement déjà présent, décochée = l'ignore.
+    // Sauvegardé dans "updateExisting" ({"F_COMPTET":"0", ...}) ; table absente = mise à jour.
+    private static final String[][] UPDATE_EXISTING_TABLES = {
+            {"F_COMPTEG", "Comptes généraux"}, {"F_TAXE", "Taxes"}, {"F_JOURNAUX", "Journaux"},
+            {"F_COLLABORATEUR", "Collaborateurs"}, {"F_COMPTET", "Clients / fournisseurs"}, {"F_LIVRAISON", "Adresses de livraison"},
+            {"F_DEPOT", "Dépôts"}, {"F_DEPOTEMPL", "Emplacements"}, {"F_CAISSE", "Caisses"},
+            {"F_FAMILLE", "Familles"}, {"F_FAMCOMPTA", "Familles compta"}, {"F_ARTICLE", "Articles"},
+            {"F_ARTCLIENT", "Articles clients"}, {"F_ARTFOURNISS", "Articles fournisseurs"}, {"F_ARTCOMPTA", "Articles compta"},
+            {"F_ARTSTOCK", "Stocks"}, {"F_CONDITION", "Conditionnements"}, {"F_TARIFCOND", "Tarifs cond."},
+            {"F_ENUMCOND", "Énumérés cond."}, {"F_RESSOURCEPROD", "Ressources"}, {"F_ARTICLERESSOURCE", "Articles ressources"},
+            {"F_DOCENTETE", "En-têtes documents"}, {"F_DOCLIGNE", "Lignes documents"}, {"F_DOCREGL", "Échéances documents"},
+            {"F_CREGLEMENT", "Règlements"}, {"F_REGLECH", "Règlements / échéances"}, {"F_JMOUV", "Journaux mouvements"},
+            {"F_ECRITUREC", "Écritures comptables"}, {"F_ECRITUREA", "Écritures analytiques"}};
+    private final Map<String, JCheckBox> updateExistingMap = new LinkedHashMap<>();
+
     public ConfigFile() {
+        // Saisie libre possible, la liste des bases est chargée depuis le serveur à l'ouverture
+        SrcBaseDeDonnees.setEditable(true);
         initCheckBoxMap();
+        JPanel updateExistingPanel = createUpdateExistingPanel();
         initValue();
 
         // Créer un panneau avec le défilement
         panel1.setLayout(new BoxLayout(panel1, BoxLayout.Y_AXIS)); // Ajuster la disposition si nécessaire
+        addBeforeValidateButton(updateExistingPanel);
 
         JScrollPane scrollPane = new JScrollPane(panel1, JScrollPane.VERTICAL_SCROLLBAR_ALWAYS, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
 
@@ -57,7 +79,25 @@ public class ConfigFile {
             checkBox.addActionListener(e -> updateConfigData());
         }
 
-        addListeners(SrcServerName, SrcBaseDeDonnees, SrcLogin, SrcMotDePasse, SrcRepertoire, dossierFTPSource, codeAgence);
+        addListeners(SrcServerName, SrcLogin, SrcMotDePasse, SrcRepertoire, dossierFTPSource, codeAgence);
+        addListeners((JTextField) SrcBaseDeDonnees.getEditor().getEditorComponent());
+        SrcBaseDeDonnees.addActionListener(e -> {
+            if (!loadingDatabase) updateConfigData();
+        });
+        SrcBaseDeDonnees.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+                loadDatabases();
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) {
+            }
+
+            @Override
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {
+            }
+        });
 
         SrcRepertoire.addMouseListener(new MouseAdapter() {
             @Override
@@ -107,6 +147,31 @@ public class ConfigFile {
         checkBoxMap.put("reception", ReceptionCheckBox);
     }
 
+    private JPanel createUpdateExistingPanel() {
+        JPanel panel = new JPanel(new java.awt.GridLayout(0, 3, 8, 2));
+        panel.setBorder(BorderFactory.createTitledBorder(
+                "Réception : mettre à jour si l'enregistrement existe déjà (décoché = ignorer)"));
+        for (String[] table : UPDATE_EXISTING_TABLES) {
+            JCheckBox checkBox = new JCheckBox(table[1], true);
+            checkBox.setToolTipText(table[0]);
+            checkBox.addActionListener(e -> updateConfigData());
+            updateExistingMap.put(table[0], checkBox);
+            panel.add(checkBox);
+        }
+        return panel;
+    }
+
+    // Insère le bloc dans panel1 juste avant la zone qui contient le bouton Valider
+    private void addBeforeValidateButton(JComponent component) {
+        java.awt.Component child = validerButton;
+        while (child.getParent() != null && child.getParent() != panel1) {
+            child = child.getParent();
+        }
+        int index = child.getParent() == panel1 ? panel1.getComponentZOrder(child) : panel1.getComponentCount();
+        component.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+        panel1.add(component, index);
+    }
+
     private void fileChooser() {
         JFileChooser chooser = new JFileChooser(FileSystemView.getFileSystemView().getHomeDirectory());
         if (!SrcRepertoire.getText().equals("")) {
@@ -120,6 +185,42 @@ public class ConfigFile {
                 SrcRepertoire.setText(chooser.getSelectedFile().toString());
             }
         }
+    }
+
+    private String getDatabaseName() {
+        Object item = SrcBaseDeDonnees.isEditable() ? SrcBaseDeDonnees.getEditor().getItem() : SrcBaseDeDonnees.getSelectedItem();
+        return item == null ? "" : item.toString().trim();
+    }
+
+    private void setDatabaseName(String name) {
+        loadingDatabase = true;
+        SrcBaseDeDonnees.setSelectedItem(name == null ? "" : name);
+        loadingDatabase = false;
+    }
+
+    // Liste les bases utilisateur du serveur avec le login / mot de passe saisis
+    private void loadDatabases() {
+        if (SrcServerName.getText().isEmpty())
+            return;
+        String current = getDatabaseName();
+        String dbURL = Table.jdbcUrl(SrcServerName.getText(), "master;loginTimeout=5");
+        java.util.Properties properties = new java.util.Properties();
+        properties.put("user", SrcLogin.getText());
+        properties.put("password", SrcMotDePasse.getText());
+        properties.put("encrypt", "false");
+        try (java.sql.Connection con = java.sql.DriverManager.getConnection(dbURL, properties);
+             java.sql.ResultSet rs = con.createStatement().executeQuery(
+                     "SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0 ORDER BY name")) {
+            loadingDatabase = true;
+            SrcBaseDeDonnees.removeAllItems();
+            while (rs.next())
+                SrcBaseDeDonnees.addItem(rs.getString(1));
+            loadingDatabase = false;
+        } catch (java.sql.SQLException ex) {
+            JOptionPane.showMessageDialog(panel1, "Impossible de lister les bases :\n" + ex.getMessage(),
+                    "Base de données", JOptionPane.WARNING_MESSAGE);
+        }
+        setDatabaseName(current);
     }
 
     private void initValue() {
@@ -207,7 +308,7 @@ public class ConfigFile {
     private JSONObject updateJson(JSONObject jsonObject) {
         jsonObject.put("servername", SrcServerName.getText());
         jsonObject.put("nomconfig", SrcNomConfig.getText());
-        jsonObject.put("database", SrcBaseDeDonnees.getText());
+        jsonObject.put("database", getDatabaseName());
         jsonObject.put("username", SrcLogin.getText());
         jsonObject.put("password", SrcMotDePasse.getText());
         jsonObject.put("path", SrcRepertoire.getText());
@@ -240,6 +341,12 @@ public class ConfigFile {
         typeDocument.put("transfert", documentDeTransfertCheckBox.isSelected() ? "1" : "0");
         typeDocument.put("documentinterne1", documentInterne1CheckBox.isSelected() ? "1" : "0");
         typeDocument.put("documentinterne2", documentInterne2CheckBox.isSelected() ? "1" : "0");
+
+        JSONObject updateExisting = new JSONObject();
+        for (Map.Entry<String, JCheckBox> entry : updateExistingMap.entrySet()) {
+            updateExisting.put(entry.getKey(), entry.getValue().isSelected() ? "1" : "0");
+        }
+        jsonObject.put("updateExisting", updateExisting);
         return jsonObject;
     }
 
@@ -247,7 +354,7 @@ public class ConfigFile {
         object = (JSONObject) infoSource.get(index);
         SrcServerName.setText((String) object.get("servername"));
         SrcNomConfig.setText((String) object.get("nomconfig"));
-        SrcBaseDeDonnees.setText((String) object.get("database"));
+        setDatabaseName((String) object.get("database"));
         SrcLogin.setText((String) object.get("username"));
         SrcMotDePasse.setText((String) object.get("password"));
         SrcRepertoire.setText((String) object.get("path"));
@@ -267,6 +374,13 @@ public class ConfigFile {
         documentDeTransfertCheckBox.setSelected("1".equals(typeDocument.get("transfert")));
         documentInterne1CheckBox.setSelected("1".equals(typeDocument.get("documentinterne1")));
         documentInterne2CheckBox.setSelected("1".equals(typeDocument.get("documentinterne2")));
+
+        // table absente du paramètre = mise à jour (comportement historique)
+        Object updateExisting = object.get("updateExisting");
+        for (Map.Entry<String, JCheckBox> entry : updateExistingMap.entrySet()) {
+            Object value = updateExisting instanceof JSONObject ? ((JSONObject) updateExisting).get(entry.getKey()) : null;
+            entry.getValue().setSelected(!"0".equals(value));
+        }
 
         // Update dateMajConfig
         if (object.containsKey("datemaj")) {
@@ -296,12 +410,26 @@ public class ConfigFile {
             // Mettre à jour la date de modification
             String dateAffichee = dateMajConfig.getText();
             DateTimeFormatter formatterAffichee = DateTimeFormatter.ofPattern("dd/MM/yyyy");
-            LocalDate date = LocalDate.parse(dateAffichee, formatterAffichee);
+            LocalDate date;
+            try {
+                date = LocalDate.parse(dateAffichee, formatterAffichee);
+            } catch (java.time.format.DateTimeParseException e) {
+                JOptionPane.showMessageDialog(panel1, "Date de mise à jour invalide : « " + dateAffichee + " ».\nFormat attendu : jj/mm/aaaa.",
+                        "Configuration non enregistrée", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
             DateTimeFormatter formatterJSON = DateTimeFormatter.ofPattern("yyyy-MM-dd");
             String datePourJSON = date.format(formatterJSON);
             object.put("datemaj", datePourJSON);
 
-            DataBase.saveInfoConnexion(infoSource, databaseSourceFile);
+            try {
+                DataBase.saveInfoConnexion(infoSource, databaseSourceFile);
+                JOptionPane.showMessageDialog(panel1, "Configuration « " + SrcNomConfig.getText() + " » enregistrée.",
+                        "Configuration", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(panel1, "Impossible d'écrire " + new File(databaseSourceFile).getAbsolutePath()
+                        + " :\n" + e.getMessage(), "Configuration non enregistrée", JOptionPane.ERROR_MESSAGE);
+            }
         }
     }
 
@@ -433,12 +561,10 @@ public class ConfigFile {
                 throw new RuntimeException(e);
             }
         }
-        public static void saveInfoConnexion(JSONArray infoSource, String databaseSourceFile) {
+        public static void saveInfoConnexion(JSONArray infoSource, String databaseSourceFile) throws IOException {
             try (FileWriter file = new FileWriter(databaseSourceFile)) {
                 file.write(infoSource.toJSONString());
                 file.flush();
-            } catch (IOException e) {
-                e.printStackTrace();
             }
         }
     }

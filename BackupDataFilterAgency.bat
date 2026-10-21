@@ -1,2 +1,2 @@
 cd C:\ItSolution\ItSolution\SynchroData\BackupDataFilterAgency_jar
-..\bin\java -jar BackupDataFilterAgency.jar ..\ConfigFile_jar\resource\databaseSource.json
+..\bin\java -cp ..\synchroData.jar BackupDataFilterAgency ..\ConfigFile_jar\resource\databaseSource.json
