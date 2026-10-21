@@ -6,30 +6,31 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Date;
+import java.util.Enumeration;
 import java.util.Properties;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 
 public class UpdateData {
 
-    public static void unzip(File path,File source){
+    // Retourne false si le zip n'a pas pu être décompressé entièrement.
+    // ZipFile lit le répertoire central : un fichier qui n'est pas un zip, ou un zip tronqué
+    // (transfert interrompu), est refusé au lieu d'être vu comme un zip vide.
+    public static boolean unzip(File path,File source){
 
-        try {
-            ZipInputStream zis = new ZipInputStream(new FileInputStream(path.getAbsolutePath()));
-            ZipEntry entry = null;
-            while((entry = zis.getNextEntry()) != null){
-                int len;
-                byte[] data = new byte[1024];
-                FileOutputStream fos = new FileOutputStream(source.getPath()+"\\"+entry.getName());
-                while((len = zis.read(data))!= -1){
-                    fos.write(data,0,len);
+        try (ZipFile zip = new ZipFile(path)) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                try (InputStream in = zip.getInputStream(entry);
+                     FileOutputStream fos = new FileOutputStream(source.getPath()+"\\"+entry.getName())) {
+                    in.transferTo(fos);
                 }
-                fos.close();
-                zis.closeEntry();
             }
-            zis.close();
+            return true;
         } catch (IOException e) {
             e.printStackTrace();
+            return false;
         }
     }
 
@@ -55,14 +56,19 @@ public class UpdateData {
                         return file.getName().endsWith(".zip");
                     };
 
+                    // Le zip reçu est archivé ; les fichiers décompressés sont supprimés une fois traités
+                    Table.setDeleteProcessedFiles(true);
                     File[] files = (new File(path)).listFiles(zipFileFilter);
                     File sourcePath = new File(path);
-                    for(File file : files) {
-                        unzip(file, sourcePath);
-                        file.delete();
+                    for(File file : files == null ? new File[0] : files) {
+                        if (unzip(file, sourcePath)) {
+                            Table.moveToArchive(path + "\\archive", path, file.getName());
+                        } else {
+                            System.out.println("Décompression impossible, zip conservé pour le prochain passage : " + file.getAbsolutePath());
+                        }
                     }
                     try {
-                        String dbURL = "jdbc:sqlserver://" + list.get("servername") + ";databaseName=" + list.get("database");
+                        String dbURL = Table.jdbcUrl(list.get("servername"), list.get("database"));
                         Properties properties = new Properties();
                         properties.put("user", list.get("username"));
                         properties.put("password", list.get("password"));

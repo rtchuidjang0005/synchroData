@@ -68,7 +68,7 @@ public class BackupData {
                 if (list.get("envoi").equals("1") && list.get("active").equals("1")) {
                     String path = (String) list.get("path");
                     try {
-                        String dbURL = "jdbc:sqlserver://" + list.get("servername") + ";databaseName=" + list.get("database");
+                        String dbURL = Table.jdbcUrl(list.get("servername"), list.get("database"));
                         Properties properties = new Properties();
                         properties.put("user", list.get("username"));
                         properties.put("password", list.get("password"));

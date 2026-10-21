@@ -41,10 +41,14 @@ public class UpdateDatabase {
         File dossierParent = new File(path); // Remplacer par le chemin du dossier
         File archive = new File(dossierParent, "archive"); // Spécifier le dossier archive
 
-        // Vérifier si le dossier parent existe
+        // Première installation : le répertoire de travail de la configuration n'existe pas encore
         if (!dossierParent.exists()) {
-            System.out.println("Le dossier spécifié n'existe pas.");
-            return; // Arrêter l'exécution si le dossier n'existe pas
+            if (dossierParent.mkdirs()) {
+                System.out.println("Répertoire de travail créé : " + dossierParent.getAbsolutePath());
+            } else {
+                System.out.println("Impossible de créer le répertoire de travail : " + dossierParent.getAbsolutePath());
+            }
+            return; // dossier neuf : rien à vider
         }
 
         supprimerContenu(dossierParent, archive);
@@ -158,7 +162,7 @@ public class UpdateDatabase {
                 JSONObject list = (JSONObject) o;
                 if (list.get("reception").equals("1") && list.get("active").equals("1")) {
                     try {
-                        String dbURL = "jdbc:sqlserver://" + list.get("servername") + ";databaseName=" + list.get("database");
+                        String dbURL = Table.jdbcUrl(list.get("servername"), list.get("database"));
                         Properties properties = new Properties();
                         properties.put("user", list.get("username"));
                         properties.put("password", list.get("password"));
